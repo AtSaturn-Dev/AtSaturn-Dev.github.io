@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Notes on building a water shader in Godot: waves, refraction, caustics, and the waterline.">
+  <title>Building the pond | Eduardo’s journal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../index.css">
+  <link rel="icon" type="image/png" href="../ProfilePicture.png">
+</head>
+<body class="personal-site journal-post-page">
+  <nav class="page-tabs" aria-label="Main navigation">
+    <a href="../index.html">Home</a>
+    <a href="../blog.html" aria-current="page">Journal</a>
+  </nav>
+  <main class="journal-post">
+    <article>
+      <header class="post-header">
+        <a href="../blog.html" class="post-back">← Back to journal</a>
+        <p class="section-label">Rendering notebook · Godot · <time datetime="2026-10-09">October 9, 2026</time></p>
+        <h1 class="post-title">Building the pond: waves, light, and the waterline</h1>
+        <p class="post-lede">I’ve been working on this little pond in Godot. Getting the waves moving was only part of it: the rocks, underwater light, and ripples all need to agree about where the water is. Some of it is working well enough to show here. The collision response still needs work.</p>
+        <figure class="post-screenshot">
+  <a href="header_image.png" target="_blank" rel="noopener noreferrer" aria-label="View full-size screenshot: Broad pale wave bands cross turquoise water; submerged rocks and fine branching light patterns remain visible below.">
+    <img src="header_image.png" alt="Broad pale wave bands cross turquoise water; submerged rocks and fine branching light patterns remain visible below." width="1920" height="1057" loading="eager" decoding="async">
+  </a>
+  <figcaption>Broad wave bands above submerged rocks, with fine caustic patterns visible through the turquoise water.</figcaption>
+</figure>
+      </header>
+      <aside class="post-sidebar">
+        <div class="post-sidebar-inner">
+          <nav class="post-breadcrumbs" aria-label="Breadcrumb">
+            <a href="../index.html">Home</a>
+            <a href="../blog.html">Journal</a>
+            <span aria-current="page">Building the pond</span>
+          </nav>
+          <details class="post-outline" open>
+            <summary>On this page</summary>
+      <nav class="post-contents" aria-label="Article sections">
+        <a href="#pipeline">Pipeline</a><a href="#waves">Waves</a><a href="#optics">Refraction</a><a href="#volume">Scattering</a><a href="#caustics">Caustics</a><a href="#intersections">Foam &amp; wetness</a><a href="#ripples">Ripples &amp; wakes</a><a href="#controls">Controls</a><a href="#recreation">Recreating it</a><a href="#references">References</a>
+      </nav>
+          </details>
+        </div>
+      </aside>
+      <div class="post-body">
+<figure class="post-screenshot">
+  <a href="pond_2026-10-09T20-53-15_133014_1920x1057.png" target="_blank" rel="noopener noreferrer" aria-label="View full-size screenshot: A rocky arch above amber-colored pond water, with caustic highlights beneath the surface.">
+    <img src="pond_2026-10-09T20-53-15_133014_1920x1057.png" alt="A rocky arch above amber-colored pond water, with caustic highlights beneath the surface." width="1920" height="1057" loading="lazy" decoding="async">
+  </a>
+  <figcaption>The pond scene, with the rock arch crossing the waterline.</figcaption>
+</figure>
+
+<p>The waterline has given me more trouble than the big waves. From above, the pond can look convincing. Put a cube halfway into it and suddenly there’s a second outline, a gap, or a strip of color that shouldn’t be there. I’ve spent alot of time on those small contacts.</p>
+<p>I’m using parts of <a href="https://github.com/AshenOneArt/HPWater">AshenOneArt's HPWater</a>, alongside my own receiver, contact, and interaction work. The port uses revision <code>1253e5b10801db791fc0768a95214228870332bd</code> and retains its MPL-2.0 notices. Collision noise is still a problem, so I’m treating that part as an experiment.</p>
+
+
+<h2 id="pipeline">How the pond is put together</h2>
+<p>The visible surface is a horizontal, subdivided <code>PlaneMesh</code>. Its shader reads the main camera's screen color and depth, then writes a complete water color through emission. It does not write <code>ALPHA</code>. That avoids blending another copy of the original opaque image over an already refracted one.</p>
+<p>A separate overscan camera renders adapted opaque receivers into a private world. Above-water receiver faces are clipped for that capture, exposing submerged faces that would otherwise be hidden. That capture provides the scene information used by the volume integration; the final refraction and forward blur sample the main camera's screen texture. When geometry goes missing, I need to check which capture that part of the effect actually reads.</p>
+<figure><div class="diagram-frame"><svg class="post-diagram" viewBox="0 0 880 335" role="img" aria-labelledby="pipeline-title"><title id="pipeline-title">Water rendering pipeline with separate color, volume, shadow and ripple inputs</title><defs><marker id="arrow" markerWidth="9" markerHeight="9" refX="8" refY="4" orient="auto"><path d="M0 0 L8 4 L0 8" fill="var(--diagram-line)"/></marker></defs><g fill="var(--diagram-panel)" stroke="var(--diagram-border)"><rect x="28" y="28" width="230" height="60" rx="8"/><rect x="28" y="122" width="230" height="70" rx="8"/><rect x="28" y="230" width="230" height="65" rx="8"/><rect x="322" y="122" width="240" height="70" rx="8"/><rect x="632" y="122" width="220" height="70" rx="8"/><rect x="632" y="28" width="220" height="60" rx="8"/></g><g text-anchor="middle"><text x="143" y="53">Main camera</text><text x="143" y="74">screen color + depth</text><text x="143" y="149">Opaque receiver capture</text><text x="143" y="173">caustics + underwater faces</text><text x="143" y="256">Sun depth capture</text><text x="143" y="280">shadow visibility</text><text x="442" y="150">Volume integration</text><text x="442" y="173">then à-trous filtering</text><text x="742" y="53">Wave equation field</text><text x="742" y="74">ripples + contact distance</text><text x="742" y="150">Surface composition</text><text x="742" y="173">opaque final water</text></g><g fill="none" stroke="var(--diagram-line)" stroke-width="2" marker-end="url(#arrow)"><path d="M258 58 H595 V145 H632"/><path d="M258 157 H322"/><path d="M258 263 H290 V175 H322"/><path d="M562 157 H632"/><path d="M742 88 V122"/></g><text x="630" y="270">Gerstner geometry + normals</text><text x="630" y="293">also feed the surface and caustics</text></svg></div><figcaption>The main camera supplies the refracted scene; the separate receiver capture feeds the volume calculation.</figcaption></figure>
+<p>An orthographic sun camera captures full occluder geometry. A compute compositor runs the ripple solver separately. <code>water_setup.gd</code> shares the wave parameters and an explicit <code>wave_time</code> among these passes. Authored materials are preserved; transient RenderingServer overrides provide the adapted main-camera receiver shading.</p>
+<p>The material adapter handles opaque <code>StandardMaterial3D</code> surfaces and the project's receiver shader. It preserves base textures, UV transforms, roughness, metallic, normal maps, and emission. Arbitrary custom shaders, transparent materials, skeletal deformation, and several advanced material features need additional support.</p>
+
+<p>It helps me to think of the captures as separate views of the same pond. The main camera supplies the image being distorted. The receiver capture gives the volume pass access to submerged faces, and the sun camera answers whether light can reach a point. A plausible final color depends on those views using the same wave parameters and time.</p>
+
+<h2 id="waves">The surface starts with Gerstner waves</h2>
+<p>Each wave has a wavelength, amplitude, direction, and phase. The later waves get shorter and smaller through spectrum decay. Moving vertices sideways gives the crests their choppy shape. I calculate the tangents from the wave equations themselves, so I don’t need to sample neighboring vertices to find the slope.</p>
+<div class="code-block"><div class="code-label">water_waves.gdshaderinc</div><pre><code><span class="syntax-comment">// Excerpt from water_waves.gdshaderinc.</span>
+<span class="syntax-keyword">float</span> phase <span class="syntax-operator">=</span> k <span class="syntax-operator">*</span> <span class="syntax-function">dot</span>(d, p) <span class="syntax-operator">-</span> omega <span class="syntax-operator">*</span> wave_speed <span class="syntax-operator">*</span> time <span class="syntax-operator">+</span> fi <span class="syntax-operator">*</span> <span class="syntax-number">2.399963</span>;
+<span class="syntax-keyword">float</span> s <span class="syntax-operator">=</span> <span class="syntax-function">sin</span>(phase);
+<span class="syntax-keyword">float</span> c <span class="syntax-operator">=</span> <span class="syntax-function">cos</span>(phase);
+displacement <span class="syntax-operator">+=</span> <span class="syntax-keyword">vec3</span>(q <span class="syntax-operator">*</span> a <span class="syntax-operator">*</span> d.x <span class="syntax-operator">*</span> c, a <span class="syntax-operator">*</span> s, q <span class="syntax-operator">*</span> a <span class="syntax-operator">*</span> d.y <span class="syntax-operator">*</span> c);
+<span class="syntax-keyword">float</span> horizontal <span class="syntax-operator">=</span> q <span class="syntax-operator">*</span> k <span class="syntax-operator">*</span> a <span class="syntax-operator">*</span> s;
+tangent_x <span class="syntax-operator">+=</span> <span class="syntax-keyword">vec3</span>(<span class="syntax-operator">-</span>horizontal <span class="syntax-operator">*</span> d.x <span class="syntax-operator">*</span> d.x,
+                  k <span class="syntax-operator">*</span> a <span class="syntax-operator">*</span> d.x <span class="syntax-operator">*</span> c, <span class="syntax-operator">-</span>horizontal <span class="syntax-operator">*</span> d.x <span class="syntax-operator">*</span> d.y);
+tangent_z <span class="syntax-operator">+=</span> <span class="syntax-keyword">vec3</span>(<span class="syntax-operator">-</span>horizontal <span class="syntax-operator">*</span> d.x <span class="syntax-operator">*</span> d.y,
+                  k <span class="syntax-operator">*</span> a <span class="syntax-operator">*</span> d.y <span class="syntax-operator">*</span> c, <span class="syntax-operator">-</span>horizontal <span class="syntax-operator">*</span> d.y <span class="syntax-operator">*</span> d.y);</code></pre></div>
+<p>The normal comes from <code>normalize(cross(tangent_z, tangent_x))</code>. Frequency follows a finite-depth gravity/capillary relation: <code>omega² = (g k + 0.000074 k³) tanh(k depth)</code>. The constant is the capillary coefficient used by this shader. The configured <code>water_depth</code> affects wave dispersion; it is seperate from the per-pixel optical thickness used for absorption.</p>
+<p>Geometry uses the base wave count. Fragments evaluate additional detail waves. Wavelengths smaller than the mesh or pixel footprint fade out through <code>smoothstep</code>. The shader accumulates the lost slope variance and broadens roughness with it, so distant detail becomes a wider highlight instead of persistent shimmer. <a href="https://developer.nvidia.com/gpugems/gpugems/part-i-natural-effects/chapter-1-effective-water-simulation-physical-models">Finch's GPU Gems chapter</a> is the useful starting point for the wave equations and derivatives.</p>
+
+<p>There are two levels of detail here. The base waves actually move the mesh, so they change its shape and silhouette. The extra fragment waves add finer surface detail. Increasing the detail count can improve the shading, but it won’t give the mesh more vertices or fix a coarse silhouette.</p>
+
+<h2 id="optics">Refraction has to agree with the visible waterline</h2>
+<p>The refraction code reconstructs the scene point from depth, computes the incident direction from camera to water, and applies Snell's law. It subtracts refraction through a flat normal before adding the original scene direction. This is the HPWater-derived projected approximation: wave normals perturb a baseline path that already points toward the observed scene.</p>
+<div class="code-block"><div class="code-label">hpwater_refraction.gdshaderinc</div><pre><code><span class="syntax-comment">// Condensed from hpwater_refraction.gdshaderinc.</span>
+<span class="syntax-keyword">vec3</span> incident <span class="syntax-operator">=</span> <span class="syntax-function">normalize</span>(water <span class="syntax-operator">-</span> camera);
+<span class="syntax-keyword">float</span> eta <span class="syntax-operator">=</span> <span class="syntax-number">1.0</span> <span class="syntax-operator">/</span> water_ior;
+<span class="syntax-keyword">vec3</span> direction <span class="syntax-operator">=</span> <span class="syntax-function">refract</span>(incident, adjusted_normal, eta);
+direction <span class="syntax-operator">-=</span> <span class="syntax-function">refract</span>(incident, <span class="syntax-keyword">vec3</span>(<span class="syntax-number">0.0</span>, <span class="syntax-number">1.0</span>, <span class="syntax-number">0.0</span>), eta);
+direction <span class="syntax-operator">+=</span> <span class="syntax-function">normalize</span>(scene <span class="syntax-operator">-</span> water);
+<span class="syntax-comment">// Project a bounded point along direction to obtain the candidate UV.</span></code></pre></div>
+<p>The default path projects a candidate directly. An optional exponential, interleaved-gradient-noise-jittered screen-space march is available, with sample-count and distance controls. I leave it off by default. Both paths are limited by what the screen buffers contain: marching farther won’t recover geometry that was never captured.</p>
+<p>Before accepting a sample, the shader checks whether it belongs above the water or in front of the surface. It validates the final UV after fades and validates the dispersion channels too. Distortion fades near thin water, screen borders, grazing angles, nearby contacts, and the optical distance limit. A configurable UV offset cap bounds the result.</p>
+
+<p>I tried fading the entire water effect at intersections. The contact ended up looking dry, as though the water stopped just short of the rock. The current version keeps absorption and scattering present, reduces refraction there, and scales surface reflection toward 35% of its usual value. The intersection fade width and strength control that transition independently of foam.</p>
+<p>RGB dispersion samples the middle, long, and short offsets with 90/5/5 channel weighting. Small subpixel dispersion skips extra convolutions. This is an artistic RGB approximation; it does not trace a continuous wavelength spectrum.</p>
+<p>Reflection uses the same IOR: <code>F0 = ((ior - 1) / (ior + 1))²</code>, followed by Schlick's angular approximation. The water combines ambient reflection with Godot's direct-light specular response. SSR and planar reflections are absent from the current pipeline. For background capture and rejection logic, see <a href="https://developer.nvidia.com/gpugems/gpugems2/part-ii-shading-lighting-and-shadows/chapter-19-generic-refraction-simulation">Generic Refraction Simulation</a> and <a href="https://catlikecoding.com/unity/tutorials/flow/looking-through-water/">Looking Through Water</a>.</p>
+
+
+
+<p>The cube test is useful because it gives the water a simple, straight edge to meet. If that edge splits into two silhouettes, I can check the refraction offset and contact fade without trying to judge the shape of a complicated rock. I also want to look at the contact from above and near the surface: a fade that hides a problem at one angle can make the water look too thin at another.</p>
+
+<h2 id="volume">Absorption, scattering, and light inside the water</h2>
+<p>Absorption and scattering are RGB coefficients. Their sum gives extinction, and direct transmission follows Beer-Lambert attenuation. A long underwater path removes more of the background image, channel by channel.</p>
+<div class="code-block"><div class="code-label">Shader excerpt</div><pre><code><span class="syntax-comment">// Surface shader excerpt.</span>
+<span class="syntax-keyword">vec3</span> sig_t <span class="syntax-operator">=</span> <span class="syntax-function">max</span>(<span class="syntax-function">max</span>(absorption, <span class="syntax-keyword">vec3</span>(<span class="syntax-number">0.0</span>))
+              <span class="syntax-operator">+</span> <span class="syntax-function">max</span>(scattering, <span class="syntax-keyword">vec3</span>(<span class="syntax-number">0.0</span>)), <span class="syntax-keyword">vec3</span>(<span class="syntax-number">0.0001</span>));
+<span class="syntax-keyword">vec3</span> T_direct <span class="syntax-operator">=</span> <span class="syntax-function">exp</span>(<span class="syntax-operator">-</span>sig_t <span class="syntax-operator">*</span> t);</code></pre></div>
+<figure><div class="diagram-frame"><svg class="post-diagram" viewBox="0 0 880 280" role="img" aria-labelledby="atten-title"><title id="atten-title">Illustrative RGB Beer-Lambert transmission with distance</title><path d="M90 35 V225 H790" fill="none" stroke="var(--diagram-muted)"/><g fill="none" stroke-width="3"><path d="M90 40 C200 137 340 203 790 222" stroke="#eeeeee"/><path d="M90 40 C300 93 570 145 790 167" stroke="#b8b8b8" stroke-dasharray="10 6"/><path d="M90 40 C310 73 600 113 790 133" stroke="#969696" stroke-dasharray="3 6"/></g><text x="20" y="44">1.0</text><text x="20" y="224">0.0</text><text x="305" y="263">Increasing underwater path length</text><text x="118" y="22">Transmitted light</text><text x="630" y="109">Blue · dotted</text><text x="630" y="151">Green · dashed</text><text x="615" y="204">Red · solid</text></svg></div><figcaption>Schematic attenuation curves, illustrating stronger red extinction. These are not measurements of the current scene.</figcaption></figure>
+<figure class="post-screenshot">
+  <a href="absorption_scattering.png" target="_blank" rel="noopener noreferrer" aria-label="View full-size screenshot: Amber, cloudy water between rocks, with submerged details fading beneath the surface.">
+    <img src="absorption_scattering.png" alt="Amber, cloudy water between rocks, with submerged details fading beneath the surface." width="1152" height="648" loading="lazy" decoding="async">
+  </a>
+  <figcaption>Absorption and scattering change how much of the submerged scene remains visible.</figcaption>
+</figure>
+
+<p>The transmission equation gives a useful way to read the settings. If a color channel retains half its light over a particular distance, doubling that distance leaves a quarter. The loss compounds along the path. That’s why changing optical thickness can have such a strong effect even when the surface tint stays the same.</p>
+
+<p>Color pickers make those coefficients easier to edit. Their <code>source_color</code> values are decoded into linear space by the spatial shaders; the compute configuration performs the corresponding conversion. A red absorption control removes red light. It does not simply paint the water red. Shallow and deep color pickers are an additional artistic tint, with a transition depth and blend strength.</p>
+<p>The volume compute shader takes six exponentially spaced samples. Each sample combines sunlight, shadow visibility, scattering albedo, phase, and segment transmittance. Volume entry is approximated with the horizontal mean water plane. The displaced surface is used elsewhere, so steep or large waves can expose that mismatch.</p>
+<div class="code-block"><div class="code-label">water_scatter.glsl</div><pre><code><span class="syntax-comment">// HPWater-derived integration excerpt, water_scatter.glsl.</span>
+<span class="syntax-keyword">vec3</span> albedo <span class="syntax-operator">=</span> scattering <span class="syntax-operator">/</span> extinction;
+<span class="syntax-keyword">vec3</span> step_transmission <span class="syntax-operator">=</span> <span class="syntax-function">exp</span>(<span class="syntax-operator">-</span>extinction <span class="syntax-operator">*</span> cross_distance);
+<span class="syntax-keyword">vec3</span> base_scatter <span class="syntax-operator">=</span> light <span class="syntax-operator">*</span> shadow
+                 <span class="syntax-operator">*</span> (<span class="syntax-keyword">vec3</span>(<span class="syntax-number">1.0</span>) <span class="syntax-operator">-</span> step_transmission) <span class="syntax-operator">*</span> albedo;
+<span class="syntax-keyword">vec3</span> effective_phase <span class="syntax-operator">=</span> <span class="syntax-function">mix</span>(scatter_phase, <span class="syntax-keyword">vec3</span>(<span class="syntax-number">1.0</span>),
+                          <span class="syntax-function">smoothstep</span>(<span class="syntax-number">0.0</span>, <span class="syntax-number">0.5</span>, luminance(albedo)));
+radiance <span class="syntax-operator">+=</span> base_scatter <span class="syntax-operator">*</span> effective_phase;
+transmission <span class="syntax-operator">*=</span> step_transmission;</code></pre></div>
+<p>The phase function describes how the scattered light changes with viewing direction. This version mixes Rayleigh and Mie-like angular terms. <code>phase_g</code> controls forward preference. The multiple-scattering approximation blends toward an isotropic phase as albedo grows, and adds scene-driven in-scattering. It does not explicitly integrate successive scattering orders. For the details of this approximation, I go back to HPWater’s source; <a href="https://pbr-book.org/4ed/Volume_Scattering">PBRT's volume chapter</a> explains the underlying quantities.</p>
+<p>A separate sun depth capture supplies visibility inside the volume. The integration includes a Beer-limited shadow sampling distance and a 30% unshadowed blend in the scene in-scattering term. Surface emission is explicitly modulated by sun visibility, because writing the water through emission bypasses ordinary diffuse shadow reception. Crest subsurface scattering adds a view- and normal-dependent glow, also multiplied by surface visibility.</p>
+<p>Surface shadow filtering interpolates comparison results between neighboring texels, then averages a 3×3 PCF neighborhood. The compute volume path still uses its own nearest-comparison 3×3 PCF. The surface and volume therefore have slightly different shadow filtering. <a href="https://developer.nvidia.com/gpugems/gpugems/part-ii-lighting-and-shadows/chapter-11-shadow-map-antialiasing">Shadow Map Antialiasing</a> explains why filtering visibility works better than blindly filtering depth.</p>
+
+<figure class="post-screenshot">
+  <a href="directional_shadow_volume.png" target="_blank" rel="noopener noreferrer" aria-label="View full-size screenshot: A broad dark shadow crossing amber water, with faint caustics visible below.">
+    <img src="directional_shadow_volume.png" alt="A broad dark shadow crossing amber water, with faint caustics visible below." width="1152" height="648" loading="lazy" decoding="async">
+  </a>
+  <figcaption>Directional shadows across the water volume.</figcaption>
+</figure>
+
+<figure class="post-screenshot">
+  <a href="random.png" target="_blank" rel="noopener noreferrer" aria-label="View full-size screenshot: A broad dark shadow from the stone arch crosses turquoise water, with pale light patterns below and small bright highlights on the surface.">
+    <img src="random.png" alt="A broad dark shadow from the stone arch crosses turquoise water, with pale light patterns below and small bright highlights on the surface." width="1920" height="1057" loading="lazy" decoding="async">
+  </a>
+  <figcaption>The arch casts a broad shadow across the turquoise water. Pale underwater light patterns remain visible beside the shadow, with small bright highlights on the surface.</figcaption>
+</figure>
+
+<p>In the turquoise screenshot, the arch’s shadow covers a broad area of the water, while pale underwater patterns remain visible nearby. Small bright highlights sit on the surface. Those are separate contributions to the image, so I’d inspect volume lighting, caustics, and reflection independently when tuning this view.</p>
+
+<h3>Why I keep blur and denoising separate</h3>
+<p>Forward scattering blur is applied to the transmitted scene image. Its radius grows with underwater optical distance and scattering density. The current implementation explicitly convolves nine screen-color taps and rejects invalid underwater samples; it does not depend on the renderer building a usable color mip pyramid. I’ve set the scene’s blur density to 0.15 and capped the radius at six pixels. Larger values made the underwater details look like a low-resolution image.</p>
+<p>À-trous filtering acts on integrated volume radiance and transmission. Up to three passes use strides 1, 2, and 4, with depth, shallow-water, and distance weights. The 3×3 kernel and conditional weights come from the HPWater port. This is a spatial filter with no motion-vector reprojection or temporal accumulation. <a href="https://jo.dreggn.org/home/2010_atrous.pdf">Dammertz et al.</a> describe the underlying edge-avoiding filter family.</p>
+<p>The final surface reconstructs the volume fields with a depth-aware 2×2 interpolation to reduce texel snapping. It preserves sky/non-sky distinctions and downweights depth differences. That interpolation is separate from the transmitted-image blur.</p>
+<p>Missing reversed-Z depth needs a finite fallback. Far samples blend into analytic absorption and ambient scattering rather than taking the capture's zero-volume, clear-transmission result. Refraction fades out as distance approaches <code>max_water_distance</code>. The fade starts at 75% of that limit. Projection division is guarded too.</p>
+
+<p>For tuning, I’d check transmission with forward blur disabled first. That makes it easier to judge the visibility of submerged geometry. Then I’d bring the blur back in and look at the fine rock detail. The volume filter has its own job: smoothing the integrated light and transmission fields without spreading them across unrelated depths.</p>
+
+<h2 id="caustics">Putting caustics on the rocks</h2>
+<p>For caustics, I’m using the project’s restored receiver-plane solver. At an underwater receiver point, the shader estimates where refracted sunlight crossed the wave surface. It performs three local inverse-mapping steps, then samples the surface at that point and at two nearby offsets.</p>
+<p>Each sample refracts sunlight and intersects the receiving tangent plane. The area spanned by those three hits measures how the wave surface concentrates light. The normalization uses a flat-water projection onto the same receiver plane, which is why sloped and vertical surfaces can be handled without projecting everything onto XZ.</p>
+<div class="code-block"><div class="code-label">water_receiver.gdshader</div><pre><code><span class="syntax-comment">// Excerpt from focus() in water_receiver.gdshader.</span>
+<span class="syntax-keyword">float</span> area <span class="syntax-operator">=</span> <span class="syntax-function">abs</span>(<span class="syntax-function">dot</span>(<span class="syntax-function">cross</span>(hx <span class="syntax-operator">-</span> h0, hz <span class="syntax-operator">-</span> h0), plane_normal))
+           <span class="syntax-operator">/</span> (epsilon <span class="syntax-operator">*</span> epsilon);
+<span class="syntax-keyword">float</span> flat_area <span class="syntax-operator">=</span> <span class="syntax-function">abs</span>(<span class="syntax-function">dot</span>(<span class="syntax-function">cross</span>(fx <span class="syntax-operator">-</span> f0, fz <span class="syntax-operator">-</span> f0), plane_normal))
+                <span class="syntax-operator">/</span> (epsilon <span class="syntax-operator">*</span> epsilon);
+<span class="syntax-keyword">return</span> <span class="syntax-function">clamp</span>(flat_area <span class="syntax-operator">/</span> <span class="syntax-function">max</span>(area, caustic_softness <span class="syntax-operator">*</span> flat_area),
+             <span class="syntax-number">0.0</span>, <span class="syntax-number">8.0</span>);</code></pre></div>
+<p>Pixel footprint and a minimum epsilon regularize the estimate. Strength, water coverage, maximum depth, solar absorption, and receiver-facing checks limit the contribution. Three IOR values give RGB spectral focusing. Ripple normals also affect the surface samples, so an interaction can disturb the caustic pattern without displacing the mesh.</p>
+<p>Caustics enter the receiver's direct lighting and use Godot's light attenuation, so shadowed receivers do not emit caustic light through their own material. Main-camera and private-capture receiver materials receive the same shared wave parameters.</p>
+<p><a href="https://medium.com/@evanwallace/rendering-realtime-caustics-in-webgl-2a99a29a0b2c">Evan Wallace's caustics article</a> explains area-contraction focusing clearly. The inverse receiver mapping here differs from his implementation. HPWater's photon caustics have not been ported.</p>
+
+<figure class="post-screenshot">
+  <a href="collision_ripples_and_caustics_mid_angle_view.png" target="_blank" rel="noopener noreferrer" aria-label="View full-size screenshot: Warmly lit rocks and a stone arch above green water, with bright caustic patterns on submerged surfaces.">
+    <img src="collision_ripples_and_caustics_mid_angle_view.png" alt="Warmly lit rocks and a stone arch above green water, with bright caustic patterns on submerged surfaces." width="1920" height="1057" loading="lazy" decoding="async">
+  </a>
+  <figcaption>A closer view of the rock contacts and underwater caustic patterns.</figcaption>
+</figure>
+
+<p>The area ratio in the focusing code is easier to picture than the full shader. When the refracted rays land closer together, the receiving area gets smaller and the light becomes more concentrated. The softness term limits that concentration, and the clamp caps the result at eight. Those limits keep a tiny estimated area from producing an arbitrarily bright patch.</p>
+
+<h2 id="intersections">Foam and wet rocks</h2>
+<p>Crest foam uses the horizontal wave Jacobian. Compression below a threshold raises a foam mask. Intersection foam uses an independent field produced by slicing mesh triangles at eight heights across the wave band.</p>
+<p>For each slice, triangle-plane intersection segments are rasterized into an XZ occupancy image. The CPU caches those masks until geometry, visibility, transform, or domain changes. The GPU evaluates local displaced Gerstner height, interpolates adjacent slices, and softens occupancy across neighboring cells. A local search produces world-space distance to the solid boundary.</p>
+<div class="code-block"><div class="code-label">Shader excerpt</div><pre><code><span class="syntax-comment">// Surface foam excerpt.</span>
+intersection_foam <span class="syntax-operator">=</span> <span class="syntax-number">1.0</span> <span class="syntax-operator">-</span> <span class="syntax-function">smoothstep</span>(
+    <span class="syntax-number">0.0</span>, <span class="syntax-function">max</span>(shore_foam_width, <span class="syntax-number">0.001</span>), boundary_distance);
+foam <span class="syntax-operator">=</span> <span class="syntax-function">max</span>(foam,
+    intersection_foam <span class="syntax-operator">*</span> foam_amount <span class="syntax-operator">*</span> intersection_foam_strength);</code></pre></div>
+<p>Foam has independent crest and intersection strengths, threshold softness, color, and roughness. It no longer multiplies its intersection mask by a screen-depth contact term. Distance is still a grid approximation with a bounded search radius. Closed, undeformed meshes are the supported case; open meshes and animated skinning can give unreliable slices.</p>
+<p>Wetness is evaluated in the receiver shader. Three inverse horizontal-displacement iterations find the wave surface above the rock's world XZ position. The difference between rock height and that water height becomes a smooth wetness mask, restricted to the water plane's bounds.</p>
+<div class="code-block"><div class="code-label">Shader excerpt</div><pre><code><span class="syntax-comment">// Receiver wetness excerpt.</span>
+<span class="syntax-keyword">float</span> wet <span class="syntax-operator">=</span> wetness_amount <span class="syntax-operator">*</span> wet_coverage
+          <span class="syntax-operator">*</span> (<span class="syntax-number">1.0</span> <span class="syntax-operator">-</span> <span class="syntax-function">smoothstep</span>(<span class="syntax-operator">-</span>wetness_band, wetness_band,
+                             world_position.y <span class="syntax-operator">-</span> local_water_height));
+<span class="syntax-constant">ALBEDO</span> <span class="syntax-operator">*=</span> <span class="syntax-number">1.0</span> <span class="syntax-operator">-</span> wet <span class="syntax-operator">*</span> wetness_darkening;
+<span class="syntax-constant">ROUGHNESS</span> <span class="syntax-operator">=</span> <span class="syntax-function">mix</span>(<span class="syntax-constant">ROUGHNESS</span>, <span class="syntax-function">min</span>(<span class="syntax-constant">ROUGHNESS</span>, wetness_roughness), wet);</code></pre></div>
+<p>The rocks darken and their roughness falls as waves reach them. There is no retained wetness history, drying timer, or simulated water film. <a href="https://seblagarde.wordpress.com/2013/03/19/water-drop-3a-physically-based-wet-surfaces/">Lagarde's wet-surface theory</a> and <a href="https://seblagarde.wordpress.com/2013/04/14/water-drop-3b-physically-based-wet-surfaces/">practical follow-up</a> cover richer models.</p>
+
+<p>The wetness mask follows the wave height right now. A rock can darken when the water reaches it, but the shader doesn’t remember that contact after the water moves away. A lingering wet band would need history and a drying rule, which this version doesn’t have.</p>
+
+<h2 id="ripples">Adding ripples and mouse wakes</h2>
+<figure class="post-screenshot">
+  <a href="water_still_top_view.png" target="_blank" rel="noopener noreferrer" aria-label="View full-size screenshot: Top-down view of green pond water between rocks, with caustics and no large circular ripple.">
+    <img src="water_still_top_view.png" alt="Top-down view of green pond water between rocks, with caustics and no large circular ripple." width="1152" height="648" loading="lazy" decoding="async">
+  </a>
+  <figcaption>The pond before the circular ripple, viewed from above.</figcaption>
+</figure>
+<figure class="post-screenshot">
+  <a href="ripples_and_caustics_top_view.png" target="_blank" rel="noopener noreferrer" aria-label="View full-size screenshot: Top-down view of concentric ripple rings spreading through the pond over underwater caustics.">
+    <img src="ripples_and_caustics_top_view.png" alt="Top-down view of concentric ripple rings spreading through the pond over underwater caustics." width="1152" height="648" loading="lazy" decoding="async">
+  </a>
+  <figcaption>The same overhead view with concentric ripples crossing the surface.</figcaption>
+</figure>
+
+<p>The interactive field now runs on a 256×256 grid with fixed 120 Hz steps and up to eight catch-up steps per frame. It uses three height textures for previous, current, and next state. A nine-point Laplacian reduces the square or diamond bias of a cardinal-only stencil.</p>
+<div class="code-block"><div class="code-label">water_ripple.glsl</div><pre><code><span class="syntax-comment">// Solver excerpt, water_ripple.glsl.</span>
+<span class="syntax-keyword">float</span> laplacian <span class="syntax-operator">=</span> (<span class="syntax-number">2.0</span><span class="syntax-operator">/</span><span class="syntax-number">3.0</span>) <span class="syntax-operator">*</span> (neighbors <span class="syntax-operator">-</span> <span class="syntax-number">4.0</span><span class="syntax-operator">*</span>current)
+                <span class="syntax-operator">+</span> (<span class="syntax-number">1.0</span><span class="syntax-operator">/</span><span class="syntax-number">6.0</span>) <span class="syntax-operator">*</span> (diagonal_neighbors <span class="syntax-operator">-</span> <span class="syntax-number">4.0</span><span class="syntax-operator">*</span>current);
+<span class="syntax-keyword">float</span> velocity_decay <span class="syntax-operator">=</span> <span class="syntax-function">exp</span>(<span class="syntax-operator">-</span>config.mask_settings.z<span class="syntax-operator">/</span><span class="syntax-number">120.0</span>)
+                     <span class="syntax-operator">*</span> (<span class="syntax-number">1.0</span><span class="syntax-operator">-</span>config.dynamics.y);
+<span class="syntax-keyword">float</span> next <span class="syntax-operator">=</span> current <span class="syntax-operator">+</span> (current<span class="syntax-operator">-</span>previous)<span class="syntax-operator">*</span>velocity_decay
+           <span class="syntax-operator">*</span> absorption<span class="syntax-operator">*</span>wall_loss
+           <span class="syntax-operator">+</span> config.dynamics.x<span class="syntax-operator">*</span>config.dynamics.x
+           <span class="syntax-operator">/</span> (<span class="syntax-number">120.0</span><span class="syntax-operator">*</span><span class="syntax-number">120.0</span>)<span class="syntax-operator">*</span>laplacian;</code></pre></div>
+<p>I apply decay to velocity. Earlier, shrinking displacement at every step changed the wave motion and made the response look wrong. A sponge at the domain borders absorbs outgoing energy. Adjustable wall damping is expressed per second rather than repeatedly multiplying velocity by the reflection setting.</p>
+<figure><div class="diagram-frame"><svg class="post-diagram" viewBox="0 0 880 280" role="img" aria-labelledby="ring-title"><title id="ring-title">Annular click pulse and a wake trail sampled along a drag path</title><g fill="none" stroke="var(--diagram-line)"><circle cx="190" cy="128" r="75" stroke-width="3"/><circle cx="190" cy="128" r="57" stroke-width="1.5" opacity=".5"/><circle cx="190" cy="128" r="92" stroke-width="1.5" opacity=".5"/><path d="M455 177 Q555 145 625 112 T790 70" stroke-width="2" stroke-dasharray="5 5"/><g stroke-width="2"><ellipse cx="470" cy="173" rx="24" ry="18"/><ellipse cx="520" cy="155" rx="24" ry="18"/><ellipse cx="570" cy="136" rx="24" ry="18"/><ellipse cx="620" cy="114" rx="24" ry="18"/><ellipse cx="670" cy="93" rx="24" ry="18"/><ellipse cx="725" cy="78" rx="24" ry="18"/></g></g><circle cx="190" cy="128" r="4" fill="#ece8df"/><text x="108" y="246">Click: annular crest/trough</text><text x="464" y="246">Drag: compact disturbances along a path</text></svg></div><figcaption>Where a click or drag injects a disturbance. The drawing shows the source arrangement, not a measured wake.</figcaption></figure>
+<p>A click injects an annular pulse with a cosine crest/trough profile and smooth compact support. Ring width and radius are configurable. Up to eight impulses can be queued per simulation update. A drag uses a compact Gaussian-like bipolar disturbance instead, sampled along the world-space cursor path. Height scales with distance traveled per source so slow motion produces smaller injections.</p>
+<p>The drag path has adjustable wake height, width, and spacing. Releasing the mouse or leaving the water resets tracking. The initial click emits a ring; pausing during an active hold no longer emits extra timed rings. Input currently runs outside the editor and uses a ray intersection with the mean water plane.</p>
+<p>Collision reflection uses fractional occupancy and shared-face weights. Incoming heights and occupancy interpolate across catch-up substeps, avoiding an immediate jump to each rendered frame's boundary state. Incoming wave slope drives a corrective ripple field. Automatic pulses based merely on changes in occupancy were removed: a stationary rock's mask can change as waves pass it, and those changes were being mistaken for impacts.</p>
+<p>The collision response is the part I’m least happy with. The noise has survived several changes. The Gerstner geometry continues along its prescribed paths; the corrective field changes surface normals and caustics. It does not redirect the underlying displaced mesh. Proper reflection and diffraction need a consistent boundary treatment and a verified numerical response. <a href="https://hplgit.github.io/INF5620/doc/notes/main_wave.html">Langtangen's finite-difference notes</a> are especially helpful for the timestep, damping, Neumann boundaries, and stability analysis.</p>
+
+<figure class="post-screenshot">
+  <a href="ripples_and_caustics_low_angle_view.png" target="_blank" rel="noopener noreferrer" aria-label="View full-size screenshot: Low-angle view of broad concentric ripples and bright underwater caustics between rocks.">
+    <img src="ripples_and_caustics_low_angle_view.png" alt="Low-angle view of broad concentric ripples and bright underwater caustics between rocks." width="1152" height="648" loading="lazy" decoding="async">
+  </a>
+  <figcaption>At a lower angle, the ripple rings and distorted underwater light patterns are easier to see.</figcaption>
+</figure>
+
+<p>Ripple normals use Catmull-Rom reconstruction with analytic derivatives across a 4×4 neighborhood. This makes gradients continuous across texel boundaries. It cannot recover detail missing from the grid, which is why the grid was increased from 128 to 256. An edge fade reduces artifacts at the field boundary. <a href="https://developer.nvidia.com/gpugems/gpugems2/part-iii-high-quality-rendering/chapter-20-fast-third-order-texture-filtering">Fast Third-Order Texture Filtering</a> explains cubic reconstruction and derivatives, though its optimized filtering scheme differs from this direct Catmull-Rom implementation.</p>
+
+<p>The fixed simulation step and rendered frame are separate. At 120 Hz, each wave update represents about 8.3 milliseconds. Catch-up steps let the solver advance more than once during a rendered frame, up to the configured limit of eight. Interpolating the boundary state across those steps avoids presenting every substep with a sudden new collision mask.</p>
+<p>The ripple screenshots show the surface and caustics reacting to the ring. They don’t establish that the collision solver reflects waves correctly. The displaced Gerstner mesh still follows its prescribed motion, while the corrective ripple field changes the normals and caustics. I need to keep that limitation in mind when judging a convincing-looking still image.</p>
+
+<h2 id="controls">What I adjust in the scene</h2>
+<div class="table-wrap"><table><thead><tr><th>Group</th><th>Controls and purpose</th></tr></thead><tbody>
+<tr><td>Waves</td><td>Base/detail counts, wind angle/spread, wavelength/amplitude decay, choppiness, speed, gravity, configured depth, mesh footprint.</td></tr>
+<tr><td>Optics</td><td>IOR, refraction strength, surface fade, UV offset limit, optional marching, march samples/distance, dispersion, blur density and pixel limit.</td></tr>
+<tr><td>Volume</td><td>Shallow/deep colors, transition depth, color strength; absorption/scattering color pickers; phase anisotropy and scattering intensity.</td></tr>
+<tr><td>Filtering</td><td>Zero to three à-trous passes and depth sensitivity. Forward blur has its own toggle.</td></tr>
+<tr><td>Lighting</td><td>Sun and ambient inputs, crest scattering color/strength, and artistic surface-shadow strength.</td></tr>
+<tr><td>Caustics</td><td>Receiver root, strength, maximum depth and debug mode; receiver shader adds dispersion and focusing softness.</td></tr>
+<tr><td>Foam/contact</td><td>Foam color/amount, crest/intersection strength, compression threshold, softness, roughness, shoreline width, and independent contact fade.</td></tr>
+<tr><td>Interaction</td><td>Ripple speed, damping, height limit, normal strength, ring radius/width; mouse wakes, wake height/width/spacing; collision strength and wall reflection/damping.</td></tr>
+<tr><td>Wetness</td><td>Amount, darkening, target roughness and waterline transition band.</td></tr>
+<tr><td>Capture</td><td>Refraction overscan, optional camera-follow and snap size. Larger captures cost more.</td></tr>
+</tbody></table></div>
+<p>There are debug views for normals, refraction offset, optical distance, blurred and sharp scene color, multiple scattering, filtered volume, transmission, blur difference, intersection foam, ripple height, and filter difference. When something looks wrong, I check the affected term on its own before changing the final color. I definately find it easier to spot the problem that way. During the collision work, it was too easy to adjust the appearance while the underlying response was still wrong.</p>
+
+
+<h3>A tuning order I’d use</h3>
+<p>I’d start with the base wave shape and speed, then check refraction on a simple object crossing the water. Once that contact is readable, I’d adjust absorption and scattering while watching how much submerged detail remains visible. Caustic strength and foam come afterward, so they don’t cover up a contact problem.</p>
+<p>For interaction, I’d use a single click in open water before testing a drag or a rock boundary. That separates the injected pulse from the collision response. The ripple-height and normal debug views should make it easier to tell whether an odd ring comes from the wave field or from its shading.</p>
+
+<h2 id="recreation">Following the implementation</h2>
+<p>To recreate this setup, I’d follow the pass order and coordinate spaces as closely as the equations. Sampler choices, texture formats, and shared parameters are part of the implementation too. Ripple height histories are R32 float; published ripple metadata is RGBA16 float. The packed GPU parameter layout must match the GDScript buffer, and the push constants carry the stage, substep, and step count. A mismatch can break the entire effect.</p>
+<p>Start with <code>water_waves.gdshaderinc</code>, then follow <code>water_setup.gd</code> through receiver capture, sun capture, and compositor setup. <code>hpwater_refraction.gdshaderinc</code> owns the screen-space optics. <code>water_scatter.glsl</code> integrates and filters the volume. Receiver focusing and wetness live in <code>water_receiver.gdshader</code>; mesh slicing is in <code>water_intersections.gd</code>. Mouse sources enter through <code>water_setup.gd</code>, are queued by <code>water_ripple_effect.gd</code>, and evolve in <code>water_ripple.glsl</code>.</p>
+<p>The extra captures, volume filtering, and 256-square ripple solver all add work. Cubic gradients read sixteen height texels, and caustic focusing repeats surface samples. I don’t have benchmark numbers for these changes yet. There’s still a few things I want to measure. The implementation assumes a camera above horizontal water and a compatible RenderingDevice path; it does not provide a full underwater-camera mode.</p>
+<p>The custom mesh slicing, contact composition, receiver inversion, and mouse wake coupling are documented by the project's source. None of the articles below reproduce the whole shader unchanged. I’d revisit collision response first, using a simple wall scene where I can watch the reflected wave without the rest of the pond getting in the way.</p>
+
+<h2 id="references">References and source credits</h2>
+<ol class="references">
+<li><a href="https://github.com/AshenOneArt/HPWater">AshenOneArt: HPWater</a>. Direct source for the adapted refraction, volumetrics, spatial filtering, and wave-equation/fluid-normal code. Revision <code>1253e5b10801db791fc0768a95214228870332bd</code>, MPL-2.0. The port and subsequent changes are recorded in <code>third_party/hpwater/NOTICE.txt</code>.</li>
+<li><a href="https://developer.nvidia.com/gpugems/gpugems/part-i-natural-effects/chapter-1-effective-water-simulation-physical-models">Mark Finch: Effective Water Simulation from Physical Models</a>. GPU Gems, chapter 1. Gerstner waves and surface derivatives.</li>
+<li><a href="https://developer.nvidia.com/gpugems/gpugems2/part-ii-shading-lighting-and-shadows/chapter-19-generic-refraction-simulation">Generic Refraction Simulation</a>. GPU Gems 2, chapter 19. Scene capture and refractive sampling.</li>
+<li><a href="https://catlikecoding.com/unity/tutorials/flow/looking-through-water/">Catlike Coding: Looking Through Water</a>. Practical depth-based underwater composition and refraction.</li>
+<li><a href="https://pbr-book.org/4ed/Volume_Scattering">Pharr, Jakob, and Humphreys: Volume Scattering</a>. Physically Based Rendering, fourth edition. Physical quantities behind absorption and scattering.</li>
+<li><a href="https://sebh.github.io/publications/">Sébastien Hillaire: Physically-Based and Unified Volumetric Rendering in Frostbite</a>. SIGGRAPH 2015 presentation linked from the author's publications page. Background on shadowed volume integration; not a direct port here.</li>
+<li><a href="https://jo.dreggn.org/home/2010_atrous.pdf">Dammertz, Sewtz, Hanika, and Lensch: Edge-Avoiding À-Trous Wavelet Transform for Fast Global Illumination Filtering</a>. HPG 2010. Filtering family behind the adapted spatial denoiser.</li>
+<li><a href="https://hplgit.github.io/INF5620/doc/notes/main_wave.html">Hans Petter Langtangen: Finite Difference Methods for Wave Motion</a>. Numerical wave equations, damping, boundary conditions, and stability.</li>
+<li><a href="https://madebyevan.com/webgl-water/">Evan Wallace: WebGL Water</a> and <a href="https://medium.com/@evanwallace/rendering-realtime-caustics-in-webgl-2a99a29a0b2c">Rendering Realtime Caustics in WebGL</a>. Interactive height fields and area-based focusing; related approaches, not exact copies of our receiver solver.</li>
+<li><a href="https://developer.nvidia.com/gpugems/gpugems2/part-iii-high-quality-rendering/chapter-20-fast-third-order-texture-filtering">Fast Third-Order Texture Filtering</a>. GPU Gems 2, chapter 20. Reconstruction and continuous derivatives.</li>
+<li><a href="https://developer.nvidia.com/gpugems/gpugems/part-ii-lighting-and-shadows/chapter-11-shadow-map-antialiasing">Shadow Map Antialiasing</a>. GPU Gems, chapter 11. Filtering shadow comparisons.</li>
+<li><a href="https://seblagarde.wordpress.com/2013/03/19/water-drop-3a-physically-based-wet-surfaces/">Sébastien Lagarde: Water Drop 3a</a> and <a href="https://seblagarde.wordpress.com/2013/04/14/water-drop-3b-physically-based-wet-surfaces/">Water Drop 3b</a>. Wet-surface theory and practical shading.</li>
+</ol>
+      </div>
+      <footer class="post-end">
+        <p>Written on October 9, 2026. I’m still working on the collision response.</p>
+        <a href="../blog.html" class="journal-link">Back to journal <span aria-hidden="true">↗</span></a>
+      </footer>
+    </article>
+  </main>
+  <footer class="footer"><p class="footer-text">© 2026 Eduardo</p></footer>
+  <script src="journal.js" defer></script>
+</body>
+</html>
