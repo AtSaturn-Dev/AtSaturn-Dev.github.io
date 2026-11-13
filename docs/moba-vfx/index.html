@@ -118,7 +118,7 @@
 
 <span class="syntax-keyword">func</span> <span class="syntax-function">cast_skillshot</span>(aim_point: <span class="syntax-constant">Vector3</span>) <span class="syntax-operator">-&gt;</span> <span class="syntax-constant">void</span>:
 	bolt.<span class="syntax-function">fire_direction</span>(aim_point <span class="syntax-operator">-</span> global_position)   <span class="syntax-comment"># uses the archetype's skillshot_range</span></code></pre></div>
-<p><code>fire_at()</code> takes a unit (homing archetypes chase it) or a <code>Vector3</code> point. <code>fire_forward()</code> fires along the launcher’s -Z axis. All three calls take an optional <code>extra</code> dictionary of settings for that one shot, for example <code>bolt.fire_at(enemy, {"charge": 0.5})</code>.</p>
+<p><code>cast_skillshot</code> assumes the launcher’s <code>archetype</code> is a skillshot, such as <code>skillshot.tres</code>, which flies in a direction instead of at a target. <code>fire_at()</code> takes a unit (homing archetypes chase it) or a <code>Vector3</code> point. <code>fire_forward()</code> fires along the launcher’s -Z axis. All three calls take an optional <code>extra</code> dictionary of settings for that one shot, for example <code>bolt.fire_at(enemy, {"charge": 0.5})</code>.</p>
 <p>The caster is the launcher’s parent unless you set <code>source</code>. The caster and everything under it is never hit by its own shots.</p>
 
 <h3>With VFX.fire</h3>
@@ -170,7 +170,7 @@
 		$HitSound.<span class="syntax-function">play</span>())
 	<span class="syntax-constant">VFX</span>.feedback.<span class="syntax-function">connect</span>(<span class="syntax-keyword">func</span>(_fx, _hitstop: <span class="syntax-constant">float</span>, shake: <span class="syntax-constant">float</span>, _at: <span class="syntax-constant">Vector3</span>) <span class="syntax-operator">-&gt;</span> <span class="syntax-constant">void</span>:
 		$Camera.<span class="syntax-function">shake</span>(shake))   <span class="syntax-comment"># your own camera code</span></code></pre></div>
-<p><code>VFX.feedback(effect, hitstop, shake, at)</code> carries the hit-stop and shake that big impacts ask for. The demo’s camera code in <code>scenes/demo/juice/</code> is a working example, and nothing in the runtime depends on it.</p>
+<p><code>VFX.feedback(effect, hitstop, shake, at)</code> carries the hit-stop and shake that big impacts ask for. The demo’s camera code in <code>scenes/demo/juice/</code> is a working example (the cue table is <code>scenes/demo/juice/demo_cues.gd</code>), and nothing in the runtime depends on it.</p>
 
 <h3>Your hurtboxes and teams</h3>
 <ul>
@@ -340,6 +340,21 @@ c.<span class="syntax-function">release</span>(aim)   <span class="syntax-commen
 </ul>
 <p>Masks are grayscale: white is full energy, black is nothing. The paid edition has 618 ready textures in <code>textures/Ours</code>, sorted by use (Glow, Smoke, Sparks, Trails, Noise and others).</p>
 
+<h3>Layer and shader options</h3>
+<ul>
+  <li><code>VFXLayer.face_camera_off_ground</code> with <code>floor_threshold</code>: a flat ring lies on the floor, but turns to face the camera when the hit is on a unit or a wall. Every plane ring in the pack has it on.</li>
+  <li><code>particle_face_camera</code> (shape shader): round sprites such as smoke, puffs, glows and chips always face the camera, even when the effect is turned toward a wall. Sparks and streaks keep their velocity alignment.</li>
+  <li><code>VFXLayer.outlive_effect</code> (on by default): one-shot particles finish their own lifetime, so embers and debris don’t vanish mid-air when the effect fades. The effect waits for them, up to 3 s.</li>
+  <li><code>VFXLayer.billboard</code>: MATERIAL, OFF, ON or Y_AXIS (upright, for columns and flames).</li>
+  <li><code>vfx_dome.gdshader</code> takes a <code>pattern_texture</code>. That’s how <code>blast_sphere</code> gets its hex pattern and <code>blast_hemisphere</code> its flowing contours.</li>
+</ul>
+<h3>Textures the effects use</h3>
+<p>All made in our own procedural texture tool, and all swappable:</p>
+<ul>
+  <li><code>effects/projectile/textures/</code>: the comet head (<code>proj_comet.png</code>, drawn by <code>Visual/Core/Comet</code>), the tiling trail mask (<code>proj_trail.png</code>), a spark (<code>proj_spark.png</code>) and 2×2 debris chips (<code>proj_debris.png</code>).</li>
+  <li><code>effects/impact/textures/</code>: 2×2 smoke and fireball sheets (<code>impact_smoke.png</code>, <code>impact_blast.png</code>), an area ring (<code>impact_area.png</code>), the dome patterns (<code>blast_sphere_hex.png</code>, <code>blast_hemi_flow.png</code>) and the black scorch mask (<code>decal_scorch_black.png</code>).</li>
+</ul>
+
 <h2 id="preview">Preview in the editor</h2>
 <p><code>VFXProjectilePreview</code> fires a missile between two stand-in capsules on a loop, right in the editor viewport.</p>
 <ol>
@@ -355,6 +370,8 @@ c.<span class="syntax-function">release</span>(aim)   <span class="syntax-commen
   <li>The preview saves nothing into your scene, and its missiles only hit the capsules.</li>
   <li>In a running game it does nothing unless <code>play_in_game</code> is on.</li>
 </ul>
+
+<p>For this to work, the effect, projectile, impact, burst, cast, layer, trail and beam scripts are <code>@tool</code>. Inside a scene you’re editing they stay inert (<code>VFXEffect.editor_inert()</code>), so opening and saving effect scenes doesn’t change them. Only effects under a preview run in the editor.</p>
 
 <h2 id="performance">Performance</h2>
 <h3>Prewarm</h3>
@@ -380,7 +397,7 @@ c.<span class="syntax-function">release</span>(aim)   <span class="syntax-commen
 <h3>Floor marks</h3>
 <ul>
   <li>Scorch marks and cracks are floor-only (<code>VFXDecalEffect.ground_only</code>). When an explosion goes off on a unit or wall, the mark drops to the floor below, or is skipped if there’s no floor within <code>max_ground_drop</code>. Bullet holes still stick to walls.</li>
-  <li>Marks don’t pile up. A new mark overlapping a live one of the same <code>stack_group</code> replaces it. Marks spaced out along a path all stay.</li>
+  <li>Marks don’t pile up. A new mark overlapping a live one of the same <code>stack_group</code> replaces it (cracks share the group <code>ground_crack</code>). Marks spaced out along a path all stay.</li>
   <li>Scorch marks are always black; the palette only colours the glowing embers.</li>
   <li><code>VFXEffect.snap_to_ground(mask, max_drop, floor_y)</code> does the floor lookup, if your own effects need it.</li>
 </ul>
@@ -442,7 +459,7 @@ c.<span class="syntax-function">release</span>(aim)   <span class="syntax-commen
   <dt>No scorch marks or cracks on the floor.</dt>
   <dd>Decals need Forward+ or Mobile; they don’t render on Compatibility. They’re also floor-only, so on a unit or wall hit they drop to the floor below or are skipped when there’s no floor within <code>max_ground_drop</code>.</dd>
   <dt>Sparks and debris fall through the floor.</dt>
-  <dd>GPU particles only collide with a <code>GPUParticlesCollision*</code> node. Add a <code>GPUParticlesCollisionBox3D</code> (or a heightfield for uneven terrain) under your floor, sized to the play area. The demo’s <code>main.tscn</code> has one called <code>FloorCollision</code>.</dd>
+  <dd>GPU particles only collide with a <code>GPUParticlesCollision*</code> node. Add a <code>GPUParticlesCollisionBox3D</code> (or a <code>GPUParticlesCollisionHeightField3D</code> for uneven terrain) under your floor, sized to the play area. The demo’s <code>main.tscn</code> has one called <code>FloorCollision</code>.</dd>
   <dt>Skillshots fly through units and <code>hit</code> never fires.</dt>
   <dd>The collision only sees units on its <code>unit_mask</code>, physics layer 2 by default. Put your units or hurtboxes on that layer, change <code>unit_mask</code>, or set <code>unit_group</code>. Also check the archetype: <code>targeted_bolt</code> has no collision, so it reports <code>impacted</code>, not <code>hit</code>.</dd>
   <dt>My signal connections stop working after a few casts.</dt>
