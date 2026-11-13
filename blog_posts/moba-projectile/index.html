@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="A step-by-step Godot tutorial: building a MOBA fireball from a plain sphere, with glow and trail shaders, particles, an impact and the polish that makes it feel good.">
+  <title>Creating a MOBA projectile from scratch | Eduardo’s journal</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="../../index.css">
+  <link rel="icon" type="image/png" href="../../ProfilePicture.png">
+</head>
+<body class="personal-site journal-post-page">
+  <nav class="page-tabs" aria-label="Main navigation">
+    <a href="../../index.html">Home</a>
+    <a href="../../blog.html" aria-current="page">Journal</a>
+    <a href="../../docs.html">Docs</a>
+  </nav>
+  <main class="journal-post">
+    <article>
+      <header class="post-header">
+        <a href="../../blog.html" class="post-back">← Back to journal</a>
+        <p class="section-label">VFX tutorial · Godot · <time datetime="2026-11-13">November 13, 2026</time></p>
+        <h1 class="post-title">Creating a MOBA projectile from scratch</h1>
+        <p class="post-lede">A fireball is the “hello world” of game VFX, and it’s a good one: a moving thing, a trail, particles, a hit. In this post I build one in Godot from a plain sphere to something that feels like a spell, one layer at a time. No textures, no plugins. Just a few small shaders, built-in nodes and some code.</p>
+        <figure class="post-screenshot">
+  <a href="hero.png" target="_blank" rel="noopener noreferrer" aria-label="View full size: A glowing orange fireball with a white-hot core streaks across a dark checkered floor, trailing a ribbon of fire and falling embers.">
+    <img src="hero.png" alt="A glowing orange fireball with a white-hot core streaks across a dark checkered floor, trailing a ribbon of fire and falling embers." width="1920" height="1080" loading="eager" decoding="async">
+  </a>
+  <figcaption>The finished projectile, mid-flight.</figcaption>
+</figure>
+      </header>
+      <aside class="post-sidebar">
+        <div class="post-sidebar-inner">
+          <nav class="post-breadcrumbs" aria-label="Breadcrumb">
+            <a href="../../index.html">Home</a>
+            <a href="../../blog.html">Journal</a>
+            <span aria-current="page">MOBA projectile</span>
+          </nav>
+          <details class="post-outline" open>
+            <summary>On this page</summary>
+      <nav class="post-contents" aria-label="Article sections">
+        <a href="#scene">A scene you can judge effects in</a><a href="#move">Step 1</a><a href="#glow">Step 2</a><a href="#trail">Step 3</a><a href="#embers">Step 4</a><a href="#impact">Step 5</a><a href="#polish">Step 6</a><a href="#look">What actually makes it look good</a><a href="#next">Where to take it next</a><a href="#download">The project</a>
+      </nav>
+          </details>
+        </div>
+      </aside>
+      <div class="post-body">
+<p>Everything here runs on Godot 4.4 or newer with the Forward+ renderer. The whole project is at the end of the post if you’d rather poke at it than copy code from a web page.</p>
+<p>I’ll go in the same order I’d build an effect for a real game: first make it work, then make it read, then make it feel good. Every GIF below is the same scene, with one more piece turned on each time.</p>
+
+<h2 id="scene">A scene you can judge effects in</h2>
+<p>Before touching the projectile, set up a place to look at it. It’s hard to judge glow on Godot’s default grey sky. MOBA effects are seen from far above, on a dark-ish floor, next to characters, so the test scene should look like that too.</p>
+<ul><li><strong>Camera:</strong> high and tilted, like a MOBA. Mine sits at <code>(0, 8.5, 7.8)</code> looking at the middle of the lane, with a 40° FOV. Always judge the effect from the camera the player will actually use.</li><li><strong>Floor:</strong> a dark checker. The squares give you a sense of scale and speed, and dark ground is where additive effects read best.</li><li><strong>Two capsules:</strong> a blue caster and a red target 10 m apart. The target strafes from side to side so you can see the projectile home in.</li><li><strong>WorldEnvironment:</strong> Filmic tonemapping, and glow enabled with <code>HDR Threshold</code> at <code>1.0</code>, <code>Intensity</code> 0.9, <code>Bloom</code> 0.04. This matters more than anything else in the scene, and I’ll get back to why in step 2.</li></ul>
+<div class="code-block"><div class="code-label">floor.gdshader</div><pre><code><span class="syntax-comment">// Dark checker floor for the test scene.</span>
+<span class="syntax-keyword">shader_type</span> spatial;
+
+<span class="syntax-keyword">uniform</span> <span class="syntax-keyword">vec3</span> color_a <span class="syntax-operator">:</span> source_color <span class="syntax-operator">=</span> <span class="syntax-keyword">vec3</span>(<span class="syntax-number">0.10</span>, <span class="syntax-number">0.10</span>, <span class="syntax-number">0.11</span>);
+<span class="syntax-keyword">uniform</span> <span class="syntax-keyword">vec3</span> color_b <span class="syntax-operator">:</span> source_color <span class="syntax-operator">=</span> <span class="syntax-keyword">vec3</span>(<span class="syntax-number">0.14</span>, <span class="syntax-number">0.14</span>, <span class="syntax-number">0.15</span>);
+
+<span class="syntax-keyword">varying</span> <span class="syntax-keyword">vec3</span> world_pos;
+
+<span class="syntax-keyword">void</span> <span class="syntax-function">vertex</span>() {
+	world_pos <span class="syntax-operator">=</span> (<span class="syntax-constant">MODEL_MATRIX</span> <span class="syntax-operator">*</span> <span class="syntax-keyword">vec4</span>(<span class="syntax-constant">VERTEX</span>, <span class="syntax-number">1.0</span>)).xyz;
+}
+
+<span class="syntax-keyword">void</span> <span class="syntax-function">fragment</span>() {
+	<span class="syntax-keyword">vec2</span> cell <span class="syntax-operator">=</span> <span class="syntax-function">floor</span>(world_pos.xz);
+	<span class="syntax-constant">ALBEDO</span> <span class="syntax-operator">=</span> <span class="syntax-function">mix</span>(color_a, color_b, <span class="syntax-function">mod</span>(cell.x <span class="syntax-operator">+</span> cell.y, <span class="syntax-number">2.0</span>));
+	<span class="syntax-constant">ROUGHNESS</span> <span class="syntax-operator">=</span> <span class="syntax-number">0.9</span>;
+}</code></pre></div>
+<p><code>main.gd</code> fires a projectile every 1.5 seconds. It also has a <code>step</code> property (1 to 6) that switches on the parts of the effect one at a time, so each GIF in this post is the same scene at a different step. You can change it on the Main node in the inspector, or run the scene with <code>++ step=3</code> on the command line.</p>
+
+<h2 id="move">Step 1: make it move</h2>
+<figure class="post-screenshot">
+  <a href="step1.gif" target="_blank" rel="noopener noreferrer" aria-label="View full size: An orange sphere flies from a blue capsule to a red one and disappears on contact.">
+    <img src="step1.gif" alt="An orange sphere flies from a blue capsule to a red one and disappears on contact." width="800" height="416" loading="lazy" decoding="async">
+  </a>
+  <figcaption>Step 1. It works, and it looks like a ping-pong ball.</figcaption>
+</figure>
+<p>Start with gameplay. The projectile is a <code>Node3D</code> that homes in on a target node, aiming at chest height. Every physics frame it moves <code>speed * delta</code> toward the target, and once it gets close enough it finishes.</p>
+<div class="code-block"><div class="code-label">projectile.gd</div><pre><code><span class="syntax-keyword">class_name</span> <span class="syntax-constant">Projectile</span>
+<span class="syntax-keyword">extends</span> <span class="syntax-constant">Node3D</span>
+<span class="syntax-comment">## Flies toward a target node (homing), plays an impact when it gets there, then lets its</span>
+<span class="syntax-comment">## trail and embers fade out before freeing itself.</span>
+
+<span class="syntax-keyword">signal</span> <span class="syntax-function">arrived</span>(at<span class="syntax-operator">:</span> <span class="syntax-constant">Vector3</span>)
+
+<span class="syntax-keyword">@export</span> <span class="syntax-keyword">var</span> speed <span class="syntax-operator">:=</span> <span class="syntax-number">14.0</span>
+<span class="syntax-comment">## Close enough to count as a hit.</span>
+<span class="syntax-keyword">@export</span> <span class="syntax-keyword">var</span> hit_radius <span class="syntax-operator">:=</span> <span class="syntax-number">0.35</span>
+<span class="syntax-comment">## Where on the target to aim (chest height).</span>
+<span class="syntax-keyword">@export</span> <span class="syntax-keyword">var</span> aim_offset <span class="syntax-operator">:=</span> <span class="syntax-function">Vector3</span>(<span class="syntax-number">0</span>, <span class="syntax-number">1.0</span>, <span class="syntax-number">0</span>)
+<span class="syntax-keyword">@export</span> <span class="syntax-keyword">var</span> impact_scene<span class="syntax-operator">:</span> <span class="syntax-constant">PackedScene</span>
+<span class="syntax-comment">## false = the impact plays its flash only.</span>
+<span class="syntax-keyword">@export</span> <span class="syntax-keyword">var</span> full_impact <span class="syntax-operator">:=</span> <span class="syntax-keyword">true</span>
+
+<span class="syntax-keyword">var</span> target<span class="syntax-operator">:</span> <span class="syntax-constant">Node3D</span>
+<span class="syntax-keyword">var</span> _flying <span class="syntax-operator">:=</span> <span class="syntax-keyword">false</span>
+
+<span class="syntax-keyword">@onready</span> <span class="syntax-keyword">var</span> _visual<span class="syntax-operator">:</span> <span class="syntax-constant">Node3D</span> <span class="syntax-operator">=</span> $<span class="syntax-constant">Visual</span>
+<span class="syntax-keyword">@onready</span> <span class="syntax-keyword">var</span> _trail<span class="syntax-operator">:</span> <span class="syntax-constant">Trail</span> <span class="syntax-operator">=</span> $<span class="syntax-constant">Trail</span>
+<span class="syntax-keyword">@onready</span> <span class="syntax-keyword">var</span> _embers<span class="syntax-operator">:</span> GPUParticles3D <span class="syntax-operator">=</span> $<span class="syntax-constant">Embers</span>
+
+
+<span class="syntax-keyword">func</span> <span class="syntax-function">launch</span>(from<span class="syntax-operator">:</span> <span class="syntax-constant">Vector3</span>, to<span class="syntax-operator">:</span> <span class="syntax-constant">Node3D</span>) <span class="syntax-operator">-&gt;</span> <span class="syntax-keyword">void</span><span class="syntax-operator">:</span>
+	global_position <span class="syntax-operator">=</span> from
+	target <span class="syntax-operator">=</span> to
+	_flying <span class="syntax-operator">=</span> <span class="syntax-keyword">true</span>
+	_embers.emitting <span class="syntax-operator">=</span> _embers.visible
+
+
+<span class="syntax-keyword">func</span> <span class="syntax-function">_physics_process</span>(delta<span class="syntax-operator">:</span> <span class="syntax-keyword">float</span>) <span class="syntax-operator">-&gt;</span> <span class="syntax-keyword">void</span><span class="syntax-operator">:</span>
+	<span class="syntax-keyword">if</span> <span class="syntax-keyword">not</span> _flying<span class="syntax-operator">:</span>
+		<span class="syntax-keyword">return</span>
+	<span class="syntax-keyword">if</span> <span class="syntax-keyword">not</span> <span class="syntax-function">is_instance_valid</span>(target)<span class="syntax-operator">:</span>
+		<span class="syntax-function">_finish</span>(global_position)
+		<span class="syntax-keyword">return</span>
+	<span class="syntax-keyword">var</span> aim <span class="syntax-operator">:=</span> target.global_position <span class="syntax-operator">+</span> aim_offset
+	<span class="syntax-keyword">var</span> to_target <span class="syntax-operator">:=</span> aim <span class="syntax-operator">-</span> global_position
+	<span class="syntax-keyword">var</span> step <span class="syntax-operator">:=</span> speed <span class="syntax-operator">*</span> delta
+	<span class="syntax-keyword">if</span> to_target.<span class="syntax-function">length</span>() <span class="syntax-operator">&lt;=</span> <span class="syntax-function">maxf</span>(step, hit_radius)<span class="syntax-operator">:</span>
+		<span class="syntax-function">_finish</span>(aim)
+		<span class="syntax-keyword">return</span>
+	global_position <span class="syntax-operator">+=</span> to_target.<span class="syntax-function">normalized</span>() <span class="syntax-operator">*</span> step
+
+
+<span class="syntax-keyword">func</span> <span class="syntax-function">_finish</span>(at<span class="syntax-operator">:</span> <span class="syntax-constant">Vector3</span>) <span class="syntax-operator">-&gt;</span> <span class="syntax-keyword">void</span><span class="syntax-operator">:</span>
+	_flying <span class="syntax-operator">=</span> <span class="syntax-keyword">false</span>
+	<span class="syntax-comment"># Hide the head right away, but let the trail and the embers die out on their own.</span>
+	_visual.visible <span class="syntax-operator">=</span> <span class="syntax-keyword">false</span>
+	_trail.emitting <span class="syntax-operator">=</span> <span class="syntax-keyword">false</span>
+	_embers.emitting <span class="syntax-operator">=</span> <span class="syntax-keyword">false</span>
+	<span class="syntax-keyword">if</span> impact_scene<span class="syntax-operator">:</span>
+		<span class="syntax-keyword">var</span> fx<span class="syntax-operator">:</span> <span class="syntax-constant">Node3D</span> <span class="syntax-operator">=</span> impact_scene.<span class="syntax-function">instantiate</span>()
+		fx.<span class="syntax-function">set</span>(<span class="syntax-operator">&amp;</span><span class="syntax-string">"full"</span>, full_impact)
+		<span class="syntax-function">get_parent</span>().<span class="syntax-function">add_child</span>(fx)
+		fx.global_position <span class="syntax-operator">=</span> at
+	arrived.<span class="syntax-function">emit</span>(at)
+	<span class="syntax-keyword">await</span> <span class="syntax-function">get_tree</span>().<span class="syntax-function">create_timer</span>(<span class="syntax-number">0.8</span>).timeout
+	<span class="syntax-function">queue_free</span>()</code></pre></div>
+<p>Two details that save headaches later:</p>
+<ul><li>The hit check uses <code>maxf(step, hit_radius)</code>. A fast projectile can move further than the hit radius in one frame and jump right past the target, flipping back and forth forever. Comparing against the step size fixes it.</li><li>When it hits, the projectile <strong>doesn’t free itself right away</strong>. It hides the head (<code>Visual</code>), stops the trail and the particles from spawning more, and waits 0.8 s. The trail and embers we add later need that time to fade out. If you <code>queue_free()</code> on hit, everything behind the projectile vanishes in one frame, and it looks like a bug.</li></ul>
+<p>Everything that makes up the “head” lives under one <code>Visual</code> node, so hiding it on impact is one line. The sphere is just a placeholder. It’s useful for testing, but it gets lit by the sun like any rock would, so it doesn’t look like it makes its own light.</p>
+
+<h2 id="glow">Step 2: a glow shader</h2>
+<figure class="post-screenshot">
+  <a href="step2.gif" target="_blank" rel="noopener noreferrer" aria-label="View full size: The sphere is replaced by a glowing orange orb with a white-hot middle and a soft halo.">
+    <img src="step2.gif" alt="The sphere is replaced by a glowing orange orb with a white-hot middle and a soft halo." width="800" height="416" loading="lazy" decoding="async">
+  </a>
+  <figcaption>Step 2. Two camera-facing quads with the same shader: a big dim halo and a small hot core.</figcaption>
+</figure>
+<p>This is the biggest jump in the whole post, and it’s two quads with one shader on them. The shader draws a soft round blob on a quad that always faces the camera.</p>
+<div class="code-block"><div class="code-label">glow.gdshader</div><pre><code><span class="syntax-comment">// A soft, glowing blob drawn on a quad that always faces the camera.</span>
+<span class="syntax-comment">// Used for the projectile core, its halo and the impact flash.</span>
+<span class="syntax-keyword">shader_type</span> spatial;
+<span class="syntax-keyword">render_mode</span> blend_add, unshaded, depth_draw_never, cull_disabled, shadows_disabled;
+
+<span class="syntax-comment">// White-hot middle, saturated body. The value step between them is what sells "energy".</span>
+<span class="syntax-keyword">uniform</span> <span class="syntax-keyword">vec4</span> core_color <span class="syntax-operator">:</span> source_color <span class="syntax-operator">=</span> <span class="syntax-keyword">vec4</span>(<span class="syntax-number">1.0</span>, <span class="syntax-number">0.92</span>, <span class="syntax-number">0.75</span>, <span class="syntax-number">1.0</span>);
+<span class="syntax-keyword">uniform</span> <span class="syntax-keyword">vec4</span> edge_color <span class="syntax-operator">:</span> source_color <span class="syntax-operator">=</span> <span class="syntax-keyword">vec4</span>(<span class="syntax-number">1.0</span>, <span class="syntax-number">0.36</span>, <span class="syntax-number">0.06</span>, <span class="syntax-number">1.0</span>);
+<span class="syntax-comment">// Above 1.0 so the glow post effect picks it up.</span>
+<span class="syntax-keyword">uniform</span> <span class="syntax-keyword">float</span> intensity <span class="syntax-operator">=</span> <span class="syntax-number">3.0</span>;
+<span class="syntax-comment">// Higher = tighter, harder falloff.</span>
+<span class="syntax-keyword">uniform</span> <span class="syntax-keyword">float</span> softness <span class="syntax-operator">:</span> <span class="syntax-function">hint_range</span>(<span class="syntax-number">0.5</span>, <span class="syntax-number">8.0</span>) <span class="syntax-operator">=</span> <span class="syntax-number">2.5</span>;
+<span class="syntax-comment">// How much the outline wobbles. 0 = a perfect circle.</span>
+<span class="syntax-keyword">uniform</span> <span class="syntax-keyword">float</span> wobble <span class="syntax-operator">:</span> <span class="syntax-function">hint_range</span>(<span class="syntax-number">0.0</span>, <span class="syntax-number">0.5</span>) <span class="syntax-operator">=</span> <span class="syntax-number">0.12</span>;
+<span class="syntax-keyword">uniform</span> <span class="syntax-keyword">float</span> wobble_speed <span class="syntax-operator">=</span> <span class="syntax-number">5.0</span>;
+<span class="syntax-comment">// Set per object from code (impact flash fading out).</span>
+<span class="syntax-keyword">instance</span> <span class="syntax-keyword">uniform</span> <span class="syntax-keyword">float</span> fade <span class="syntax-operator">=</span> <span class="syntax-number">1.0</span>;
+
+<span class="syntax-keyword">float</span> <span class="syntax-function">hash</span>(<span class="syntax-keyword">vec2</span> p) {
+	<span class="syntax-keyword">return</span> <span class="syntax-function">fract</span>(<span class="syntax-function">sin</span>(<span class="syntax-function">dot</span>(p, <span class="syntax-keyword">vec2</span>(<span class="syntax-number">127.1</span>, <span class="syntax-number">311.7</span>))) <span class="syntax-operator">*</span> <span class="syntax-number">43758.5453</span>);
+}
+
+<span class="syntax-keyword">float</span> <span class="syntax-function">noise</span>(<span class="syntax-keyword">vec2</span> p) {
+	<span class="syntax-keyword">vec2</span> i <span class="syntax-operator">=</span> <span class="syntax-function">floor</span>(p);
+	<span class="syntax-keyword">vec2</span> f <span class="syntax-operator">=</span> <span class="syntax-function">fract</span>(p);
+	<span class="syntax-keyword">vec2</span> u <span class="syntax-operator">=</span> f <span class="syntax-operator">*</span> f <span class="syntax-operator">*</span> (<span class="syntax-number">3.0</span> <span class="syntax-operator">-</span> <span class="syntax-number">2.0</span> <span class="syntax-operator">*</span> f);
+	<span class="syntax-keyword">return</span> <span class="syntax-function">mix</span>(<span class="syntax-function">mix</span>(<span class="syntax-function">hash</span>(i), <span class="syntax-function">hash</span>(i <span class="syntax-operator">+</span> <span class="syntax-keyword">vec2</span>(<span class="syntax-number">1.0</span>, <span class="syntax-number">0.0</span>)), u.x),
+			<span class="syntax-function">mix</span>(<span class="syntax-function">hash</span>(i <span class="syntax-operator">+</span> <span class="syntax-keyword">vec2</span>(<span class="syntax-number">0.0</span>, <span class="syntax-number">1.0</span>)), <span class="syntax-function">hash</span>(i <span class="syntax-operator">+</span> <span class="syntax-keyword">vec2</span>(<span class="syntax-number">1.0</span>, <span class="syntax-number">1.0</span>)), u.x), u.y);
+}
+
+<span class="syntax-keyword">void</span> <span class="syntax-function">vertex</span>() {
+	<span class="syntax-comment">// Billboard: swap the model's rotation for the camera's, keep position and scale.</span>
+	<span class="syntax-constant">MODELVIEW_MATRIX</span> <span class="syntax-operator">=</span> <span class="syntax-constant">VIEW_MATRIX</span> <span class="syntax-operator">*</span> <span class="syntax-keyword">mat4</span>(<span class="syntax-constant">INV_VIEW_MATRIX</span>[<span class="syntax-number">0</span>], <span class="syntax-constant">INV_VIEW_MATRIX</span>[<span class="syntax-number">1</span>], <span class="syntax-constant">INV_VIEW_MATRIX</span>[<span class="syntax-number">2</span>], <span class="syntax-constant">MODEL_MATRIX</span>[<span class="syntax-number">3</span>]);
+	<span class="syntax-constant">MODELVIEW_MATRIX</span> <span class="syntax-operator">=</span> <span class="syntax-constant">MODELVIEW_MATRIX</span> <span class="syntax-operator">*</span> <span class="syntax-keyword">mat4</span>(
+			<span class="syntax-keyword">vec4</span>(<span class="syntax-function">length</span>(<span class="syntax-constant">MODEL_MATRIX</span>[<span class="syntax-number">0</span>].xyz), <span class="syntax-number">0.0</span>, <span class="syntax-number">0.0</span>, <span class="syntax-number">0.0</span>),
+			<span class="syntax-keyword">vec4</span>(<span class="syntax-number">0.0</span>, <span class="syntax-function">length</span>(<span class="syntax-constant">MODEL_MATRIX</span>[<span class="syntax-number">1</span>].xyz), <span class="syntax-number">0.0</span>, <span class="syntax-number">0.0</span>),
+			<span class="syntax-keyword">vec4</span>(<span class="syntax-number">0.0</span>, <span class="syntax-number">0.0</span>, <span class="syntax-function">length</span>(<span class="syntax-constant">MODEL_MATRIX</span>[<span class="syntax-number">2</span>].xyz), <span class="syntax-number">0.0</span>),
+			<span class="syntax-keyword">vec4</span>(<span class="syntax-number">0.0</span>, <span class="syntax-number">0.0</span>, <span class="syntax-number">0.0</span>, <span class="syntax-number">1.0</span>));
+}
+
+<span class="syntax-keyword">void</span> <span class="syntax-function">fragment</span>() {
+	<span class="syntax-keyword">vec2</span> p <span class="syntax-operator">=</span> <span class="syntax-constant">UV</span> <span class="syntax-operator">*</span> <span class="syntax-number">2.0</span> <span class="syntax-operator">-</span> <span class="syntax-number">1.0</span>;
+	<span class="syntax-comment">// Wobble the radius with noise sampled around the circle, so the edge boils.</span>
+	<span class="syntax-keyword">float</span> angle <span class="syntax-operator">=</span> <span class="syntax-function">atan</span>(p.y, p.x);
+	<span class="syntax-keyword">float</span> n <span class="syntax-operator">=</span> <span class="syntax-function">noise</span>(<span class="syntax-keyword">vec2</span>(angle <span class="syntax-operator">*</span> <span class="syntax-number">2.0</span> <span class="syntax-operator">+</span> <span class="syntax-number">10.0</span>, <span class="syntax-constant">TIME</span> <span class="syntax-operator">*</span> wobble_speed));
+	<span class="syntax-keyword">float</span> r <span class="syntax-operator">=</span> <span class="syntax-function">length</span>(p) <span class="syntax-operator">*</span> (<span class="syntax-number">1.0</span> <span class="syntax-operator">+</span> (n <span class="syntax-operator">-</span> <span class="syntax-number">0.5</span>) <span class="syntax-operator">*</span> wobble <span class="syntax-operator">*</span> <span class="syntax-number">2.0</span>);
+	<span class="syntax-keyword">float</span> m <span class="syntax-operator">=</span> <span class="syntax-function">pow</span>(<span class="syntax-function">clamp</span>(<span class="syntax-number">1.0</span> <span class="syntax-operator">-</span> r, <span class="syntax-number">0.0</span>, <span class="syntax-number">1.0</span>), softness);
+	<span class="syntax-keyword">vec3</span> col <span class="syntax-operator">=</span> <span class="syntax-function">mix</span>(edge_color.rgb, core_color.rgb, <span class="syntax-function">smoothstep</span>(<span class="syntax-number">0.35</span>, <span class="syntax-number">0.9</span>, m));
+	<span class="syntax-constant">ALBEDO</span> <span class="syntax-operator">=</span> col <span class="syntax-operator">*</span> intensity <span class="syntax-operator">*</span> fade;
+	<span class="syntax-constant">ALPHA</span> <span class="syntax-operator">=</span> m <span class="syntax-operator">*</span> fade;
+}</code></pre></div>
+<h3>Why it looks hot</h3>
+<p>Three things in there do most of the work:</p>
+<ol><li><strong><code>blend_add</code> and <code>unshaded</code>.</strong> Additive blending adds the colour on top of what’s behind it, so the glow can only make things brighter, like real light. <code>unshaded</code> means the sun and shadows don’t touch it.</li><li><strong><code>intensity</code> above 1.0.</strong> The core is drawn at 4× its colour. With the WorldEnvironment glow threshold at 1.0, only pixels brighter than 1.0 bloom. So the hot middle blooms and the floor, the capsules and the UI don’t. This is the main reason to keep threshold at 1.0 instead of 0: you choose what glows by pushing it over 1.</li><li><strong>Two colours, mixed by brightness.</strong> The middle is almost white (<code>core_color</code>), the outside is a saturated orange (<code>edge_color</code>). Fire, magic and lasers all look like this: the hottest part is close to white, and the colour lives around it. A blob that’s orange all the way through looks like a sticker.</li></ol>
+<p><code>softness</code> is the exponent on the falloff. Low values give a wide, foggy glow, high values give a tight dot. The halo uses 3.2 on a 1.5 m quad with low intensity, and the core uses 2.0 on a 0.6 m quad at intensity 4. Same shader, two very different jobs.</p>
+<p>The <code>wobble</code> part moves the radius a little with noise sampled around the circle, so the edge boils instead of being a perfect disc. Keep it subtle. At 0.1 you barely see it, but the orb feels alive.</p>
+<figure class="post-screenshot">
+  <a href="editor-glow-material.png" target="_blank" rel="noopener noreferrer" aria-label="View full size: The Godot editor with the projectile scene open. The Core node is selected and the inspector shows the glow shader parameters: Core Color, Edge Color, Intensity 4, Softness 2, Wobble 0.1.">
+    <img src="editor-glow-material.png" alt="The Godot editor with the projectile scene open. The Core node is selected and the inspector shows the glow shader parameters: Core Color, Edge Color, Intensity 4, Softness 2, Wobble 0.1." width="1920" height="1015" loading="lazy" decoding="async">
+  </a>
+  <figcaption>The Core quad selected in the editor. All the look is in those six shader parameters.</figcaption>
+</figure>
+<h3>The billboard trick</h3>
+<p>The <code>vertex()</code> function turns any quad into a billboard. <code>MODELVIEW_MATRIX</code> normally carries the node’s own rotation. Here I build a new one from the camera’s rotation (<code>INV_VIEW_MATRIX</code>) and the node’s position (<code>MODEL_MATRIX[3]</code>), then put the node’s scale back. The quad always faces the camera, but you can still scale it from code, which the impact flash needs later.</p>
+<figure class="post-screenshot">
+  <a href="editor-glow-shader.png" target="_blank" rel="noopener noreferrer" aria-label="View full size: Godot’s shader editor showing the top of glow.gdshader: the render_mode line and the uniforms with their comments.">
+    <img src="editor-glow-shader.png" alt="Godot’s shader editor showing the top of glow.gdshader: the render_mode line and the uniforms with their comments." width="1920" height="1015" loading="lazy" decoding="async">
+  </a>
+  <figcaption>glow.gdshader in Godot’s shader editor.</figcaption>
+</figure>
+<p>The halo and the core are both transparent, so I give the core <code>sorting_offset = 0.1</code> to make sure it always draws after the halo. With additive blending the order doesn’t change the colour much, but it stops flickering when they overlap exactly.</p>
+<p>I also added an <code>OmniLight3D</code> to the <code>Visual</code> node (orange, range 3.5 m). You’ll see it light up the floor in the last step. A real light on the ground under the projectile does a lot to make it feel like it’s actually there.</p>
+
+<h2 id="trail">Step 3: the trail</h2>
+<figure class="post-screenshot">
+  <a href="step3.gif" target="_blank" rel="noopener noreferrer" aria-label="View full size: The glowing orb now leaves a tapered orange ribbon behind it that breaks apart near the end.">
+    <img src="step3.gif" alt="The glowing orb now leaves a tapered orange ribbon behind it that breaks apart near the end." width="800" height="416" loading="lazy" decoding="async">
+  </a>
+  <figcaption>Step 3. A ribbon that always faces the camera, with noise eating the tail.</figcaption>
+</figure>
+<p>The trail tells the player where the projectile came from and how fast it’s going. That’s gameplay information, not just decoration. Godot doesn’t have a trail node for 3D, so I build a ribbon mesh every frame with <code>ImmediateMesh</code>.</p>
+<div class="code-block"><div class="code-label">trail.gd</div><pre><code><span class="syntax-keyword">class_name</span> <span class="syntax-constant">Trail</span>
+<span class="syntax-keyword">extends</span> <span class="syntax-constant">MeshInstance3D</span>
+<span class="syntax-comment">## Camera-facing ribbon that follows its parent. Each point remembers when it was made,</span>
+<span class="syntax-comment">## and points older than `lifetime` drop off the tail.</span>
+
+<span class="syntax-keyword">@export</span> <span class="syntax-keyword">var</span> lifetime <span class="syntax-operator">:=</span> <span class="syntax-number">0.35</span>
+<span class="syntax-keyword">@export</span> <span class="syntax-keyword">var</span> width <span class="syntax-operator">:=</span> <span class="syntax-number">0.55</span>
+<span class="syntax-comment">## Don't add a point until the head has moved this far.</span>
+<span class="syntax-keyword">@export</span> <span class="syntax-keyword">var</span> min_distance <span class="syntax-operator">:=</span> <span class="syntax-number">0.08</span>
+
+<span class="syntax-keyword">var</span> emitting <span class="syntax-operator">:=</span> <span class="syntax-keyword">true</span>
+
+<span class="syntax-keyword">var</span> _points<span class="syntax-operator">:</span> <span class="syntax-constant">PackedVector3Array</span> <span class="syntax-operator">=</span> []
+<span class="syntax-keyword">var</span> _ages<span class="syntax-operator">:</span> <span class="syntax-constant">PackedFloat32Array</span> <span class="syntax-operator">=</span> []
+<span class="syntax-keyword">var</span> _mesh <span class="syntax-operator">:=</span> <span class="syntax-constant">ImmediateMesh</span>.<span class="syntax-function">new</span>()
+
+
+<span class="syntax-keyword">func</span> <span class="syntax-function">_ready</span>() <span class="syntax-operator">-&gt;</span> <span class="syntax-keyword">void</span><span class="syntax-operator">:</span>
+	mesh <span class="syntax-operator">=</span> _mesh
+	<span class="syntax-comment"># The ribbon lives in world space, so it doesn't drag along with the projectile.</span>
+	top_level <span class="syntax-operator">=</span> <span class="syntax-keyword">true</span>
+	global_transform <span class="syntax-operator">=</span> <span class="syntax-constant">Transform3D</span>.<span class="syntax-constant">IDENTITY</span>
+
+
+<span class="syntax-keyword">func</span> <span class="syntax-function">_process</span>(delta<span class="syntax-operator">:</span> <span class="syntax-keyword">float</span>) <span class="syntax-operator">-&gt;</span> <span class="syntax-keyword">void</span><span class="syntax-operator">:</span>
+	<span class="syntax-keyword">for</span> i <span class="syntax-keyword">in</span> _ages.<span class="syntax-function">size</span>()<span class="syntax-operator">:</span>
+		_ages[i] <span class="syntax-operator">+=</span> delta
+	<span class="syntax-comment"># Old points fall off the tail.</span>
+	<span class="syntax-keyword">while</span> _ages.<span class="syntax-function">size</span>() <span class="syntax-operator">&gt;</span> <span class="syntax-number">0</span> <span class="syntax-keyword">and</span> _ages[_ages.<span class="syntax-function">size</span>() <span class="syntax-operator">-</span> <span class="syntax-number">1</span>] <span class="syntax-operator">&gt;</span> lifetime<span class="syntax-operator">:</span>
+		_points.<span class="syntax-function">remove_at</span>(_points.<span class="syntax-function">size</span>() <span class="syntax-operator">-</span> <span class="syntax-number">1</span>)
+		_ages.<span class="syntax-function">remove_at</span>(_ages.<span class="syntax-function">size</span>() <span class="syntax-operator">-</span> <span class="syntax-number">1</span>)
+	<span class="syntax-keyword">if</span> emitting<span class="syntax-operator">:</span>
+		<span class="syntax-keyword">var</span> head <span class="syntax-operator">:=</span> (<span class="syntax-function">get_parent</span>() <span class="syntax-keyword">as</span> <span class="syntax-constant">Node3D</span>).global_position
+		<span class="syntax-keyword">if</span> _points.<span class="syntax-function">is_empty</span>() <span class="syntax-keyword">or</span> _points[<span class="syntax-number">0</span>].<span class="syntax-function">distance_to</span>(head) <span class="syntax-operator">&gt;</span> min_distance<span class="syntax-operator">:</span>
+			_points.<span class="syntax-function">insert</span>(<span class="syntax-number">0</span>, head)
+			_ages.<span class="syntax-function">insert</span>(<span class="syntax-number">0</span>, <span class="syntax-number">0.0</span>)
+		<span class="syntax-keyword">else</span><span class="syntax-operator">:</span>
+			<span class="syntax-comment"># Keep the newest point glued to the head so the ribbon never lags behind it.</span>
+			_points[<span class="syntax-number">0</span>] <span class="syntax-operator">=</span> head
+	<span class="syntax-function">_rebuild</span>()
+
+
+<span class="syntax-keyword">func</span> <span class="syntax-function">_rebuild</span>() <span class="syntax-operator">-&gt;</span> <span class="syntax-keyword">void</span><span class="syntax-operator">:</span>
+	_mesh.<span class="syntax-function">clear_surfaces</span>()
+	<span class="syntax-keyword">var</span> cam <span class="syntax-operator">:=</span> <span class="syntax-function">get_viewport</span>().<span class="syntax-function">get_camera_3d</span>()
+	<span class="syntax-keyword">if</span> _points.<span class="syntax-function">size</span>() <span class="syntax-operator">&lt;</span> <span class="syntax-number">2</span> <span class="syntax-keyword">or</span> cam <span class="syntax-operator">==</span> <span class="syntax-keyword">null</span><span class="syntax-operator">:</span>
+		<span class="syntax-keyword">return</span>
+	_mesh.<span class="syntax-function">surface_begin</span>(<span class="syntax-constant">Mesh</span>.<span class="syntax-constant">PRIMITIVE_TRIANGLE_STRIP</span>)
+	<span class="syntax-keyword">for</span> i <span class="syntax-keyword">in</span> _points.<span class="syntax-function">size</span>()<span class="syntax-operator">:</span>
+		<span class="syntax-keyword">var</span> p <span class="syntax-operator">:=</span> _points[i]
+		<span class="syntax-comment"># Direction along the ribbon, from the neighbours on each side (smooth through curves).</span>
+		<span class="syntax-keyword">var</span> dir <span class="syntax-operator">:=</span> _points[<span class="syntax-function">maxi</span>(i <span class="syntax-operator">-</span> <span class="syntax-number">1</span>, <span class="syntax-number">0</span>)] <span class="syntax-operator">-</span> _points[<span class="syntax-function">mini</span>(i <span class="syntax-operator">+</span> <span class="syntax-number">1</span>, _points.<span class="syntax-function">size</span>() <span class="syntax-operator">-</span> <span class="syntax-number">1</span>)]
+		<span class="syntax-keyword">var</span> to_cam <span class="syntax-operator">:=</span> cam.global_position <span class="syntax-operator">-</span> p
+		<span class="syntax-comment"># The sideways vector faces the camera, so the strip is never seen edge-on.</span>
+		<span class="syntax-keyword">var</span> side <span class="syntax-operator">:=</span> dir.<span class="syntax-function">cross</span>(to_cam).<span class="syntax-function">normalized</span>()
+		<span class="syntax-keyword">var</span> age <span class="syntax-operator">:=</span> <span class="syntax-function">clampf</span>(_ages[i] <span class="syntax-operator">/</span> lifetime, <span class="syntax-number">0.0</span>, <span class="syntax-number">1.0</span>)
+		<span class="syntax-keyword">var</span> w <span class="syntax-operator">:=</span> width <span class="syntax-operator">*</span> (<span class="syntax-number">1.0</span> <span class="syntax-operator">-</span> age <span class="syntax-operator">*</span> age)
+		_mesh.<span class="syntax-function">surface_set_uv</span>(<span class="syntax-function">Vector2</span>(age, <span class="syntax-number">0.0</span>))
+		_mesh.<span class="syntax-function">surface_add_vertex</span>(p <span class="syntax-operator">+</span> side <span class="syntax-operator">*</span> w <span class="syntax-operator">*</span> <span class="syntax-number">0.5</span>)
+		_mesh.<span class="syntax-function">surface_set_uv</span>(<span class="syntax-function">Vector2</span>(age, <span class="syntax-number">1.0</span>))
+		_mesh.<span class="syntax-function">surface_add_vertex</span>(p <span class="syntax-operator">-</span> side <span class="syntax-operator">*</span> w <span class="syntax-operator">*</span> <span class="syntax-number">0.5</span>)
+	_mesh.<span class="syntax-function">surface_end</span>()</code></pre></div>
+<p>The idea is simple: keep a list of recent positions of the head, each with an age. New points go in front, points older than <code>lifetime</code> drop off the back. Each frame, turn that list into a strip of triangles.</p>
+<ul><li><strong><code>top_level = true</code>.</strong> The trail is a child of the projectile, but its points are in world space. Without this the whole ribbon would move with the projectile, like a stick glued to it.</li><li><strong>Facing the camera.</strong> For each point, the sideways direction is the cross product of the direction along the trail and the direction to the camera. That keeps the flat strip turned toward the camera, so you never see it edge-on as a thin line.</li><li><strong>Tapering.</strong> The width goes down with <code>1 - age²</code>, so it stays thick for a while and then thins out quickly at the end.</li><li><strong>UVs that mean something.</strong> <code>UV.x</code> is the age (0 at the head, 1 at the tail) and <code>UV.y</code> goes across. The shader uses that instead of a texture.</li></ul>
+<p>Ages advance by <code>delta</code>, not by the wall clock. That way the trail follows the game’s time scale, so slow motion and pausing work for free.</p>
+<div class="code-block"><div class="code-label">trail.gdshader</div><pre><code><span class="syntax-comment">// The ribbon behind the projectile. UV.x = age (0 at the head, 1 at the tail), UV.y = across.</span>
+<span class="syntax-keyword">shader_type</span> spatial;
+<span class="syntax-keyword">render_mode</span> blend_add, unshaded, depth_draw_never, cull_disabled, shadows_disabled;
+
+<span class="syntax-keyword">uniform</span> <span class="syntax-keyword">vec4</span> head_color <span class="syntax-operator">:</span> source_color <span class="syntax-operator">=</span> <span class="syntax-keyword">vec4</span>(<span class="syntax-number">1.0</span>, <span class="syntax-number">0.85</span>, <span class="syntax-number">0.5</span>, <span class="syntax-number">1.0</span>);
+<span class="syntax-keyword">uniform</span> <span class="syntax-keyword">vec4</span> tail_color <span class="syntax-operator">:</span> source_color <span class="syntax-operator">=</span> <span class="syntax-keyword">vec4</span>(<span class="syntax-number">1.0</span>, <span class="syntax-number">0.22</span>, <span class="syntax-number">0.02</span>, <span class="syntax-number">1.0</span>);
+<span class="syntax-keyword">uniform</span> <span class="syntax-keyword">float</span> intensity <span class="syntax-operator">=</span> <span class="syntax-number">2.2</span>;
+<span class="syntax-comment">// Noise sliding along the ribbon makes it look like it flows instead of being a flat strip.</span>
+<span class="syntax-keyword">uniform</span> <span class="syntax-keyword">float</span> scroll_speed <span class="syntax-operator">=</span> <span class="syntax-number">4.0</span>;
+<span class="syntax-keyword">uniform</span> <span class="syntax-keyword">float</span> breakup <span class="syntax-operator">:</span> <span class="syntax-function">hint_range</span>(<span class="syntax-number">0.0</span>, <span class="syntax-number">1.0</span>) <span class="syntax-operator">=</span> <span class="syntax-number">0.55</span>;
+
+<span class="syntax-keyword">float</span> <span class="syntax-function">hash</span>(<span class="syntax-keyword">vec2</span> p) {
+	<span class="syntax-keyword">return</span> <span class="syntax-function">fract</span>(<span class="syntax-function">sin</span>(<span class="syntax-function">dot</span>(p, <span class="syntax-keyword">vec2</span>(<span class="syntax-number">127.1</span>, <span class="syntax-number">311.7</span>))) <span class="syntax-operator">*</span> <span class="syntax-number">43758.5453</span>);
+}
+
+<span class="syntax-keyword">float</span> <span class="syntax-function">noise</span>(<span class="syntax-keyword">vec2</span> p) {
+	<span class="syntax-keyword">vec2</span> i <span class="syntax-operator">=</span> <span class="syntax-function">floor</span>(p);
+	<span class="syntax-keyword">vec2</span> f <span class="syntax-operator">=</span> <span class="syntax-function">fract</span>(p);
+	<span class="syntax-keyword">vec2</span> u <span class="syntax-operator">=</span> f <span class="syntax-operator">*</span> f <span class="syntax-operator">*</span> (<span class="syntax-number">3.0</span> <span class="syntax-operator">-</span> <span class="syntax-number">2.0</span> <span class="syntax-operator">*</span> f);
+	<span class="syntax-keyword">return</span> <span class="syntax-function">mix</span>(<span class="syntax-function">mix</span>(<span class="syntax-function">hash</span>(i), <span class="syntax-function">hash</span>(i <span class="syntax-operator">+</span> <span class="syntax-keyword">vec2</span>(<span class="syntax-number">1.0</span>, <span class="syntax-number">0.0</span>)), u.x),
+			<span class="syntax-function">mix</span>(<span class="syntax-function">hash</span>(i <span class="syntax-operator">+</span> <span class="syntax-keyword">vec2</span>(<span class="syntax-number">0.0</span>, <span class="syntax-number">1.0</span>)), <span class="syntax-function">hash</span>(i <span class="syntax-operator">+</span> <span class="syntax-keyword">vec2</span>(<span class="syntax-number">1.0</span>, <span class="syntax-number">1.0</span>)), u.x), u.y);
+}
+
+<span class="syntax-keyword">void</span> <span class="syntax-function">fragment</span>() {
+	<span class="syntax-keyword">float</span> age <span class="syntax-operator">=</span> <span class="syntax-constant">UV</span>.x;
+	<span class="syntax-keyword">float</span> across <span class="syntax-operator">=</span> <span class="syntax-function">abs</span>(<span class="syntax-constant">UV</span>.y <span class="syntax-operator">*</span> <span class="syntax-number">2.0</span> <span class="syntax-operator">-</span> <span class="syntax-number">1.0</span>);
+	<span class="syntax-comment">// Soft edges, brightest along the middle.</span>
+	<span class="syntax-keyword">float</span> body <span class="syntax-operator">=</span> <span class="syntax-number">1.0</span> <span class="syntax-operator">-</span> <span class="syntax-function">smoothstep</span>(<span class="syntax-number">0.15</span>, <span class="syntax-number">1.0</span>, across);
+	<span class="syntax-keyword">float</span> n <span class="syntax-operator">=</span> <span class="syntax-function">noise</span>(<span class="syntax-keyword">vec2</span>(<span class="syntax-constant">UV</span>.x <span class="syntax-operator">*</span> <span class="syntax-number">7.0</span> <span class="syntax-operator">-</span> <span class="syntax-constant">TIME</span> <span class="syntax-operator">*</span> scroll_speed, <span class="syntax-constant">UV</span>.y <span class="syntax-operator">*</span> <span class="syntax-number">3.0</span>));
+	<span class="syntax-comment">// Fade toward the tail, and let the noise eat the tail first.</span>
+	<span class="syntax-keyword">float</span> m <span class="syntax-operator">=</span> body <span class="syntax-operator">*</span> (<span class="syntax-number">1.0</span> <span class="syntax-operator">-</span> age);
+	m <span class="syntax-operator">*=</span> <span class="syntax-function">mix</span>(<span class="syntax-number">1.0</span>, <span class="syntax-function">smoothstep</span>(age <span class="syntax-operator">*</span> <span class="syntax-number">0.9</span>, age <span class="syntax-operator">*</span> <span class="syntax-number">0.9</span> <span class="syntax-operator">+</span> <span class="syntax-number">0.35</span>, n), breakup);
+	<span class="syntax-keyword">vec3</span> col <span class="syntax-operator">=</span> <span class="syntax-function">mix</span>(head_color.rgb, tail_color.rgb, <span class="syntax-function">smoothstep</span>(<span class="syntax-number">0.0</span>, <span class="syntax-number">0.6</span>, age));
+	<span class="syntax-constant">ALBEDO</span> <span class="syntax-operator">=</span> col <span class="syntax-operator">*</span> intensity;
+	<span class="syntax-constant">ALPHA</span> <span class="syntax-operator">=</span> <span class="syntax-function">clamp</span>(m, <span class="syntax-number">0.0</span>, <span class="syntax-number">1.0</span>);
+}</code></pre></div>
+<p>The trail shader does three things: soft edges across the ribbon, a colour shift from a yellow head to a deep orange tail, and noise that scrolls backwards along it. The trick is in the <code>smoothstep</code> with <code>age</code>: as a point gets older, the threshold goes up, so the noise eats the tail first. The ribbon breaks into pieces at the end instead of fading like a gradient, and that looks much more like fire.</p>
+
+<h2 id="embers">Step 4: embers</h2>
+<figure class="post-screenshot">
+  <a href="step4.gif" target="_blank" rel="noopener noreferrer" aria-label="View full size: Small glowing embers now fall off the projectile and drift upward as it flies.">
+    <img src="step4.gif" alt="Small glowing embers now fall off the projectile and drift upward as it flies." width="800" height="416" loading="lazy" decoding="async">
+  </a>
+  <figcaption>Step 4. Thirty-two little dots, left behind in the world.</figcaption>
+</figure>
+<p>Embers add secondary motion: things that react to the main motion instead of just following it. They are a <code>GPUParticles3D</code> with a tiny quad.</p>
+<div class="table-wrap"><table><thead><tr><th>Setting</th><th>Value</th><th>Why</th></tr></thead><tbody><tr><td><code>local_coords</code></td><td>off</td><td>The most important one. Particles stay where they spawned instead of following the projectile, so they get left behind.</td></tr><tr><td><code>amount</code> / <code>lifetime</code></td><td>32 / 0.6 s</td><td>Short life, just enough to see a scattered line behind the head.</td></tr><tr><td>Emission</td><td>Sphere, radius 0.12</td><td>Spawn inside the orb, not at a single point.</td></tr><tr><td>Velocity</td><td>0.3 to 1.1, spread 180°</td><td>Slow, in every direction. They drift, they don’t shoot out.</td></tr><tr><td>Gravity</td><td><code>(0, 1.5, 0)</code></td><td>Upward. Hot embers rise.</td></tr><tr><td>Damping</td><td>1 to 2</td><td>Kills the initial push so they hang in the air.</td></tr><tr><td>Scale curve</td><td>1 → 0</td><td>They shrink away instead of popping out.</td></tr><tr><td>Color ramp</td><td>HDR white → orange → dark red, alpha to 0</td><td>Same hot-to-cool idea as the core.</td></tr></tbody></table></div>
+<p>For the colour ramp, tick <code>Use HDR</code> on the <code>GradientTexture1D</code> and use values above 1 for the first colours (I start at <code>(3.0, 2.6, 2.0)</code>). Without that the ramp clamps at 1.0, the embers never cross the glow threshold, and they look flat next to the glowing core.</p>
+<p>The particle material is a <code>StandardMaterial3D</code>: unshaded, additive blend, <code>Vertex Color &gt; Use as Albedo</code> on (that’s how the colour ramp reaches the quad), and a radial <code>GradientTexture2D</code> from white to transparent as the albedo texture. That gives you a soft round dot without painting anything.</p>
+
+<h2 id="impact">Step 5: the impact</h2>
+<figure class="post-screenshot">
+  <a href="step5.gif" target="_blank" rel="noopener noreferrer" aria-label="View full size: When the orb reaches the red capsule it pops into a bright flash that shrinks away.">
+    <img src="step5.gif" alt="When the orb reaches the red capsule it pops into a bright flash that shrinks away." width="800" height="416" loading="lazy" decoding="async">
+  </a>
+  <figcaption>Step 5. Just a flash. Already better than vanishing.</figcaption>
+</figure>
+<p>Up to now the projectile just disappeared on contact, and the hit was the least satisfying part. The impact is a separate scene that the projectile spawns at the hit position. First version: a single flash using the same glow shader with a high intensity.</p>
+<p>The flash is <strong>biggest on the first frame</strong> and shrinks while it fades. It reaches full size immediately and is almost gone in 0.12 s, about 7 frames at 60 fps. An impact that grows in looks soft and late. An impact that’s already at full size when it appears looks like it hit hard.</p>
+<p>Fading uses the <code>fade</code> instance uniform from the glow shader. Instance uniforms are set per node with <code>set_instance_shader_parameter()</code>, so every impact can fade on its own without duplicating the material.</p>
+
+<h2 id="polish">Step 6: polish</h2>
+<figure class="post-screenshot">
+  <a href="step6.gif" target="_blank" rel="noopener noreferrer" aria-label="View full size: The finished effect: a cast flash at the caster’s hand, a glowing orb with a trail and embers, and an impact with a flash, flying sparks, a ring on the floor, a burst of light and a small camera shake.">
+    <img src="step6.gif" alt="The finished effect: a cast flash at the caster’s hand, a glowing orb with a trail and embers, and an impact with a flash, flying sparks, a ring on the floor, a burst of light and a small camera shake." width="800" height="416" loading="lazy" decoding="async">
+  </a>
+  <figcaption>Step 6. Same projectile, with everything turned on.</figcaption>
+</figure>
+<p>This is the step where it starts to feel good. None of these pieces is complicated, but together they make the hit feel heavier:</p>
+<ul><li><strong>Sparks.</strong> A one-shot burst of 26 particles, all at once (<code>explosiveness</code> 1). They shoot up fast and fall with strong gravity. The quad is thin and tall (0.07 × 0.55) and <code>transform_align</code> is <code>Z-Billboard, Y to Velocity</code>, which stretches each spark along the direction it’s moving. That’s the cheap way to get motion-blurred streaks.</li><li><strong>A ring on the floor.</strong> Even though the projectile hits at chest height, the ring is snapped to the floor. It tells the player where the hit happened on the ground, which is what they read from a top-down camera. It expands quickly, then slows down.</li><li><strong>Light.</strong> An <code>OmniLight3D</code> that starts at energy 8 and drops to 0 in the same 0.12 s as the flash. The floor and the target light up for a moment. This is probably the most underrated part of the whole effect.</li><li><strong>Cast flash.</strong> When the caster fires, I spawn the same impact scene at the hand, at 45% scale and with only the flash. It’s free and it makes the shot feel like it was released, instead of appearing out of nowhere.</li><li><strong>Camera shake.</strong> Short and small.</li></ul>
+<div class="code-block"><div class="code-label">impact.gd</div><pre><code><span class="syntax-keyword">extends</span> <span class="syntax-constant">Node3D</span>
+<span class="syntax-comment">## Impact: a flash that pops and shrinks, a ring that expands on the floor, a burst of</span>
+<span class="syntax-comment">## sparks and a quick light. Everything is timed from one clock so it reads as one hit.</span>
+
+<span class="syntax-comment">## false = flash only (the simple version from step 5 of the tutorial).</span>
+<span class="syntax-keyword">@export</span> <span class="syntax-keyword">var</span> full <span class="syntax-operator">:=</span> <span class="syntax-keyword">true</span>
+<span class="syntax-keyword">@export</span> <span class="syntax-keyword">var</span> lifetime <span class="syntax-operator">:=</span> <span class="syntax-number">0.55</span>
+
+<span class="syntax-keyword">var</span> _t <span class="syntax-operator">:=</span> <span class="syntax-number">0.0</span>
+
+<span class="syntax-keyword">@onready</span> <span class="syntax-keyword">var</span> _flash<span class="syntax-operator">:</span> <span class="syntax-constant">GeometryInstance3D</span> <span class="syntax-operator">=</span> $<span class="syntax-constant">Flash</span>
+<span class="syntax-keyword">@onready</span> <span class="syntax-keyword">var</span> _ring<span class="syntax-operator">:</span> <span class="syntax-constant">GeometryInstance3D</span> <span class="syntax-operator">=</span> $<span class="syntax-constant">Ring</span>
+<span class="syntax-keyword">@onready</span> <span class="syntax-keyword">var</span> _sparks<span class="syntax-operator">:</span> GPUParticles3D <span class="syntax-operator">=</span> $<span class="syntax-constant">Sparks</span>
+<span class="syntax-keyword">@onready</span> <span class="syntax-keyword">var</span> _light<span class="syntax-operator">:</span> <span class="syntax-constant">OmniLight3D</span> <span class="syntax-operator">=</span> $<span class="syntax-constant">Light</span>
+
+
+<span class="syntax-keyword">func</span> <span class="syntax-function">_ready</span>() <span class="syntax-operator">-&gt;</span> <span class="syntax-keyword">void</span><span class="syntax-operator">:</span>
+	_ring.visible <span class="syntax-operator">=</span> full
+	_sparks.visible <span class="syntax-operator">=</span> full
+	_light.visible <span class="syntax-operator">=</span> full
+	<span class="syntax-comment"># The ring lies on the floor even when the hit lands at chest height.</span>
+	_ring.global_position.y <span class="syntax-operator">=</span> <span class="syntax-number">0.03</span>
+	<span class="syntax-keyword">if</span> full<span class="syntax-operator">:</span>
+		_sparks.<span class="syntax-function">restart</span>()
+	<span class="syntax-function">_update</span>()
+
+
+<span class="syntax-keyword">func</span> <span class="syntax-function">_process</span>(delta<span class="syntax-operator">:</span> <span class="syntax-keyword">float</span>) <span class="syntax-operator">-&gt;</span> <span class="syntax-keyword">void</span><span class="syntax-operator">:</span>
+	_t <span class="syntax-operator">+=</span> delta
+	<span class="syntax-function">_update</span>()
+	<span class="syntax-keyword">if</span> _t <span class="syntax-operator">&gt;</span> lifetime <span class="syntax-operator">+</span> <span class="syntax-number">0.5</span><span class="syntax-operator">:</span>
+		<span class="syntax-function">queue_free</span>()
+
+
+<span class="syntax-keyword">func</span> <span class="syntax-function">_update</span>() <span class="syntax-operator">-&gt;</span> <span class="syntax-keyword">void</span><span class="syntax-operator">:</span>
+	<span class="syntax-keyword">var</span> k <span class="syntax-operator">:=</span> <span class="syntax-function">clampf</span>(_t <span class="syntax-operator">/</span> lifetime, <span class="syntax-number">0.0</span>, <span class="syntax-number">1.0</span>)
+	<span class="syntax-comment"># Flash: biggest on the first frame, then shrinks and fades in about 0.12 s.</span>
+	<span class="syntax-keyword">var</span> f <span class="syntax-operator">:=</span> <span class="syntax-function">clampf</span>(_t <span class="syntax-operator">/</span> <span class="syntax-number">0.12</span>, <span class="syntax-number">0.0</span>, <span class="syntax-number">1.0</span>)
+	_flash.scale <span class="syntax-operator">=</span> <span class="syntax-constant">Vector3</span>.<span class="syntax-constant">ONE</span> <span class="syntax-operator">*</span> <span class="syntax-function">lerpf</span>(<span class="syntax-number">1.8</span>, <span class="syntax-number">0.6</span>, f)
+	_flash.<span class="syntax-function">set_instance_shader_parameter</span>(<span class="syntax-operator">&amp;</span><span class="syntax-string">"fade"</span>, <span class="syntax-number">1.0</span> <span class="syntax-operator">-</span> f)
+	<span class="syntax-comment"># Ring: fast at first, then slows down (ease-out), fading as it grows.</span>
+	<span class="syntax-keyword">var</span> e <span class="syntax-operator">:=</span> <span class="syntax-number">1.0</span> <span class="syntax-operator">-</span> <span class="syntax-function">pow</span>(<span class="syntax-number">1.0</span> <span class="syntax-operator">-</span> k, <span class="syntax-number">3.0</span>)
+	_ring.scale <span class="syntax-operator">=</span> <span class="syntax-constant">Vector3</span>.<span class="syntax-constant">ONE</span> <span class="syntax-operator">*</span> <span class="syntax-function">lerpf</span>(<span class="syntax-number">0.4</span>, <span class="syntax-number">3.2</span>, e)
+	_ring.<span class="syntax-function">set_instance_shader_parameter</span>(<span class="syntax-operator">&amp;</span><span class="syntax-string">"fade"</span>, <span class="syntax-number">1.0</span> <span class="syntax-operator">-</span> k)
+	_light.light_energy <span class="syntax-operator">=</span> <span class="syntax-number">8.0</span> <span class="syntax-operator">*</span> (<span class="syntax-number">1.0</span> <span class="syntax-operator">-</span> f)</code></pre></div>
+<p>Everything in the impact is driven by one clock, <code>_t</code>, in <code>_update()</code>. That’s on purpose. If the flash, the ring and the light each run on their own tween, they slowly drift apart while you tweak them, and the hit stops reading as one event. With one clock you can see the whole timing on one screen:</p>
+<figure><div class="diagram-frame"><svg class="post-diagram" viewBox="0 0 860 248" role="img" aria-labelledby="timing-title"><title id="timing-title">Impact timing on a linear axis: flash and light last 0.12 seconds, sparks about 0.45, ring 0.55</title><defs><linearGradient id="fade0" x1="0" x2="1"><stop offset="0" stop-color="#f0b070"/><stop offset="1" stop-color="#f0b070" stop-opacity="0.08"/></linearGradient><linearGradient id="fade1" x1="0" x2="1"><stop offset="0" stop-color="#e0a068"/><stop offset="1" stop-color="#e0a068" stop-opacity="0.08"/></linearGradient><linearGradient id="fade2" x1="0" x2="1"><stop offset="0" stop-color="#c98a5e"/><stop offset="1" stop-color="#c98a5e" stop-opacity="0.08"/></linearGradient><linearGradient id="fade3" x1="0" x2="1"><stop offset="0" stop-color="#b07a5a"/><stop offset="1" stop-color="#b07a5a" stop-opacity="0.08"/></linearGradient></defs><path d="M120 16 V212" stroke="var(--diagram-border)" stroke-dasharray="3 5"/><text x="120" y="234" font-size="12" fill="var(--diagram-muted)" text-anchor="middle">0 s</text><path d="M220 16 V212" stroke="var(--diagram-border)" stroke-dasharray="3 5"/><text x="220" y="234" font-size="12" fill="var(--diagram-muted)" text-anchor="middle">0.1</text><path d="M320 16 V212" stroke="var(--diagram-border)" stroke-dasharray="3 5"/><text x="320" y="234" font-size="12" fill="var(--diagram-muted)" text-anchor="middle">0.2</text><path d="M420 16 V212" stroke="var(--diagram-border)" stroke-dasharray="3 5"/><text x="420" y="234" font-size="12" fill="var(--diagram-muted)" text-anchor="middle">0.3</text><path d="M520 16 V212" stroke="var(--diagram-border)" stroke-dasharray="3 5"/><text x="520" y="234" font-size="12" fill="var(--diagram-muted)" text-anchor="middle">0.4</text><path d="M620 16 V212" stroke="var(--diagram-border)" stroke-dasharray="3 5"/><text x="620" y="234" font-size="12" fill="var(--diagram-muted)" text-anchor="middle">0.5</text><path d="M720 16 V212" stroke="var(--diagram-border)" stroke-dasharray="3 5"/><text x="720" y="234" font-size="12" fill="var(--diagram-muted)" text-anchor="middle">0.6</text><text x="104" y="43" font-size="14" text-anchor="end">Flash</text><rect x="120" y="28" width="120" height="20" rx="4" fill="url(#fade0)"/><text x="252" y="43" font-size="12" fill="var(--diagram-muted)">0.12 s, full size on frame 1</text><text x="104" y="89" font-size="14" text-anchor="end">Light</text><rect x="120" y="74" width="120" height="20" rx="4" fill="url(#fade1)"/><text x="252" y="89" font-size="12" fill="var(--diagram-muted)">0.12 s, energy 8 → 0</text><text x="104" y="135" font-size="14" text-anchor="end">Sparks</text><rect x="120" y="120" width="450" height="20" rx="4" fill="url(#fade2)"/><text x="582" y="135" font-size="12" fill="var(--diagram-muted)">about 0.45 s</text><text x="104" y="181" font-size="14" text-anchor="end">Ring</text><rect x="120" y="166" width="550" height="20" rx="4" fill="url(#fade3)"/><text x="682" y="181" font-size="12" fill="var(--diagram-muted)">0.55 s, ease-out</text></svg></div><figcaption>Everything starts on frame one. The bright, fast parts are over in about 7 frames, and the slower parts carry the hit for another half second.</figcaption></figure>
+<p>The ring shader has a sharp outer edge and a soft inner one, so it reads as a wave pushing outward. Its scale uses a cubic ease-out (<code>1 - (1 - k)³</code>), which means fast at first and slow at the end, like a real shockwave losing energy.</p>
+<div class="code-block"><div class="code-label">ring.gdshader</div><pre><code><span class="syntax-comment">// A thin ring for the impact shockwave. Lies flat on a PlaneMesh.</span>
+<span class="syntax-keyword">shader_type</span> spatial;
+<span class="syntax-keyword">render_mode</span> blend_add, unshaded, depth_draw_never, cull_disabled, shadows_disabled;
+
+<span class="syntax-keyword">uniform</span> <span class="syntax-keyword">vec4</span> color <span class="syntax-operator">:</span> source_color <span class="syntax-operator">=</span> <span class="syntax-keyword">vec4</span>(<span class="syntax-number">1.0</span>, <span class="syntax-number">0.55</span>, <span class="syntax-number">0.15</span>, <span class="syntax-number">1.0</span>);
+<span class="syntax-keyword">uniform</span> <span class="syntax-keyword">float</span> intensity <span class="syntax-operator">=</span> <span class="syntax-number">2.5</span>;
+<span class="syntax-keyword">uniform</span> <span class="syntax-keyword">float</span> radius <span class="syntax-operator">:</span> <span class="syntax-function">hint_range</span>(<span class="syntax-number">0.1</span>, <span class="syntax-number">1.0</span>) <span class="syntax-operator">=</span> <span class="syntax-number">0.8</span>;
+<span class="syntax-keyword">uniform</span> <span class="syntax-keyword">float</span> thickness <span class="syntax-operator">:</span> <span class="syntax-function">hint_range</span>(<span class="syntax-number">0.01</span>, <span class="syntax-number">0.3</span>) <span class="syntax-operator">=</span> <span class="syntax-number">0.07</span>;
+<span class="syntax-keyword">instance</span> <span class="syntax-keyword">uniform</span> <span class="syntax-keyword">float</span> fade <span class="syntax-operator">=</span> <span class="syntax-number">1.0</span>;
+
+<span class="syntax-keyword">void</span> <span class="syntax-function">fragment</span>() {
+	<span class="syntax-keyword">float</span> r <span class="syntax-operator">=</span> <span class="syntax-function">length</span>(<span class="syntax-constant">UV</span> <span class="syntax-operator">*</span> <span class="syntax-number">2.0</span> <span class="syntax-operator">-</span> <span class="syntax-number">1.0</span>);
+	<span class="syntax-comment">// Sharp outer edge, softer inner one: reads as a wave pushing outward.</span>
+	<span class="syntax-keyword">float</span> d <span class="syntax-operator">=</span> r <span class="syntax-operator">-</span> radius;
+	<span class="syntax-keyword">float</span> w <span class="syntax-operator">=</span> d <span class="syntax-operator">&gt;</span> <span class="syntax-number">0.0</span> ? thickness <span class="syntax-operator">*</span> <span class="syntax-number">0.5</span> <span class="syntax-operator">:</span> thickness <span class="syntax-operator">*</span> <span class="syntax-number">1.6</span>;
+	<span class="syntax-keyword">float</span> ring <span class="syntax-operator">=</span> <span class="syntax-function">exp</span>(<span class="syntax-operator">-</span>(d <span class="syntax-operator">*</span> d) <span class="syntax-operator">/</span> (w <span class="syntax-operator">*</span> w));
+	<span class="syntax-constant">ALBEDO</span> <span class="syntax-operator">=</span> color.rgb <span class="syntax-operator">*</span> intensity <span class="syntax-operator">*</span> fade;
+	<span class="syntax-constant">ALPHA</span> <span class="syntax-operator">=</span> ring <span class="syntax-operator">*</span> fade;
+}</code></pre></div>
+<p>The cast flash and the camera shake live in <code>main.gd</code>, because they belong to the game more than to the projectile. The shake is a random offset that decays fast. Squaring it makes it fall off even faster, so you get one strong kick and not a wobble:</p>
+<div class="code-block"><div class="code-label">main.gd (excerpt)</div><pre><code><span class="syntax-comment"># Camera shake: random offset that dies out quickly.</span>
+_shake <span class="syntax-operator">=</span> <span class="syntax-function">maxf</span>(_shake <span class="syntax-operator">-</span> delta <span class="syntax-operator">*</span> <span class="syntax-number">3.0</span>, <span class="syntax-number">0.0</span>)
+<span class="syntax-keyword">var</span> s <span class="syntax-operator">:=</span> _shake <span class="syntax-operator">*</span> _shake
+_camera.transform <span class="syntax-operator">=</span> _cam_home.<span class="syntax-function">translated_local</span>(<span class="syntax-function">Vector3</span>(<span class="syntax-function">randf_range</span>(<span class="syntax-operator">-</span><span class="syntax-number">1</span>, <span class="syntax-number">1</span>), <span class="syntax-function">randf_range</span>(<span class="syntax-operator">-</span><span class="syntax-number">1</span>, <span class="syntax-number">1</span>), <span class="syntax-number">0.0</span>) <span class="syntax-operator">*</span> s <span class="syntax-operator">*</span> <span class="syntax-number">0.25</span>)</code></pre></div>
+<div class="code-block"><div class="code-label">main.gd (excerpt, inside _fire)</div><pre><code><span class="syntax-keyword">if</span> step <span class="syntax-operator">&gt;=</span> <span class="syntax-number">6</span><span class="syntax-operator">:</span>
+	<span class="syntax-comment"># A small flash at the hand sells the release.</span>
+	<span class="syntax-keyword">var</span> cast<span class="syntax-operator">:</span> <span class="syntax-constant">Node3D</span> <span class="syntax-operator">=</span> <span class="syntax-constant">IMPACT</span>.<span class="syntax-function">instantiate</span>()
+	cast.full <span class="syntax-operator">=</span> <span class="syntax-keyword">false</span>
+	cast.scale <span class="syntax-operator">=</span> <span class="syntax-constant">Vector3</span>.<span class="syntax-constant">ONE</span> <span class="syntax-operator">*</span> <span class="syntax-number">0.45</span>
+	<span class="syntax-function">add_child</span>(cast)
+	cast.global_position <span class="syntax-operator">=</span> muzzle</code></pre></div>
+<p>Keep the shake tiny for something as small as a basic attack. If every auto-attack shakes the screen hard, players will turn the option off, and then your big ultimate loses its shake too.</p>
+
+<h2 id="look">What actually makes it look good</h2>
+<p>The code is the easy part. These are the things I keep coming back to when an effect looks “off” and I can’t tell why:</p>
+<ol><li><strong>Value before colour.</strong> Look at your effect in greyscale (or squint). There should be a clear brightest point, the core, and everything else should step down from it. If the trail is as bright as the core, the eye doesn’t know where to look.</li><li><strong>White-hot middle, saturated edges.</strong> Colour lives in the mid-tones and the edges. The centre goes toward white. This works for fire, ice, poison, holy, all of them. Only the edge colour changes.</li><li><strong>HDR and glow do the heavy lifting.</strong> Push the parts that should glow over 1.0 and keep the glow threshold at 1.0. Then you decide what blooms, and the rest of the game stays clean.</li><li><strong>Fast in, slow out.</strong> Flashes start at full size. Rings and shockwaves start fast and slow down. Fading is usually slower than appearing. Things that ease in look weak.</li><li><strong>Secondary motion.</strong> The embers and the wobble aren’t the effect, but without them the orb looks like an image sliding across the screen.</li><li><strong>Sell it on the world.</strong> The real light on the floor, the ring on the ground and the shake are what make the projectile feel like it exists in the scene. They cost almost nothing.</li><li><strong>Readability first.</strong> In a MOBA, the player needs to know what’s coming, where it’s going and where it landed, in the middle of a teamfight. Trail = direction. Ring on the floor = where. Flash = when. If a detail doesn’t help with one of those, keep it subtle.</li><li><strong>Judge it in game.</strong> At gameplay speed, from the gameplay camera, next to other things. Effects that look great paused in the editor often turn into mush at 60 fps from 15 m away.</li></ol>
+
+<h2 id="next">Where to take it next</h2>
+<ul><li><strong>Other elements.</strong> Change <code>core_color</code>, <code>edge_color</code>, the trail colours and the colour ramps, and you have frost, poison or arcane versions. Keep the white-hot core, and keep the value steps the same.</li><li><strong>Textures.</strong> Swap the procedural noise for a painted or generated mask to get more shape and detail. Use the same UV setup: age along the trail, distance from the centre on the glow.</li><li><strong>Pooling.</strong> Spawning a scene per shot is fine for a test. For a real game with many units firing, keep a few projectiles and impacts around and reuse them.</li><li><strong>Variation.</strong> Randomize the impact rotation, spark count and flash size a little on every hit. Even ±10% is enough to stop repeated hits from looking copy-pasted.</li></ul>
+
+<h2 id="download">The project</h2>
+<p>Everything in this post is in one small Godot project (4.4+): the test scene, the projectile, the impact, and the four shaders. Open it, run <code>main.tscn</code>, and change <code>step</code> on the Main node to see each stage. <a href="moba-projectile-tutorial.zip">Download the project</a>.</p>
+<p>If you make something with it, I’d love to see it. Send it on Discord or tag me anywhere.</p>
+      </div>
+      <footer class="post-end">
+        <p>Written on November 13, 2026.</p>
+        <a href="../../blog.html" class="journal-link">Back to journal <span aria-hidden="true">↗</span></a>
+      </footer>
+    </article>
+  </main>
+  <footer class="footer"><p class="footer-text">© 2026 Eduardo</p></footer>
+  <script src="../journal.js" defer></script>
+</body>
+</html>
