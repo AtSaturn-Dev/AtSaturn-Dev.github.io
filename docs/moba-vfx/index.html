@@ -78,9 +78,11 @@
 <h2 id="install">Install</h2>
 <ol>
   <li>Copy <code>addons/moba_vfx</code> into your project’s <code>addons/</code> folder.</li>
-  <li>Open the project and go to <em>Project › Project Settings › Plugins</em>. Enable <strong>MOBA VFX</strong>.</li>
+  <li>Open the project and go to <em>Project › Project Settings › Addons</em>. On the <em>Plugins</em> tab, enable <strong>MOBA VFX</strong>.</li>
   <li>That adds an autoload called <code>VFX</code> (<code>res://addons/moba_vfx/core/vfx_manager.gd</code>). Check it under <em>Globals › Autoload</em>. Every spawn, the pooling and the budgets go through it.</li>
 </ol>
+<figure class="post-screenshot doc-ui"><a href="shots/ed-plugins.webp" target="_blank" rel="noopener noreferrer"><img src="shots/ed-plugins.webp" alt="Project Settings, Addons tab, Plugins list with MOBA VFX by AtSaturn and Ihully, version 1.0.0, enabled." width="1100" height="250" loading="lazy" decoding="async"></a><figcaption>Step 2: <em>Project Settings › Addons › Plugins</em>, with MOBA VFX switched on.</figcaption></figure>
+<figure class="post-screenshot doc-ui"><a href="shots/ed-autoload.webp" target="_blank" rel="noopener noreferrer"><img src="shots/ed-autoload.webp" alt="Project Settings, Globals tab, Autoload list showing VFX pointing at res://addons/moba_vfx/core/vfx_manager.gd." width="1100" height="210" loading="lazy" decoding="async"></a><figcaption>Step 3: the <code>VFX</code> autoload the plugin adds, under <em>Globals › Autoload</em>.</figcaption></figure>
 <p>To try the demo first, open the whole downloaded folder as a project and press Play. The first import takes a while because of the textures. A short splash plays (any key or click skips it), then <code>scenes/main.tscn</code> opens and cycles through every archetype.</p>
 <div class="table-wrap"><table>
   <thead><tr><th>Key</th><th>Demo action</th></tr></thead>
@@ -106,6 +108,7 @@
   <li>Set <code>muzzle</code> to a node in the character’s hand, or <code>muzzle_socket</code> to a bone or socket name. Leave both empty to fire from the launcher itself.</li>
   <li>Set <code>tier</code> and <code>team</code> if you need them. Leave <code>missile_scene</code> empty to use the default missile.</li>
 </ol>
+<figure class="post-screenshot"><a href="shots/ed-launcher.webp" target="_blank" rel="noopener noreferrer"><img src="shots/ed-launcher.webp" alt="Godot editor with a Hero scene: Model, CollisionShape3D, Hand and BoltLauncher. The inspector shows BoltLauncher with targeted_bolt.tres as archetype, frost.tres as palette and Hand as muzzle." width="1600" height="960" loading="lazy" decoding="async"></a><figcaption>A character with a <code>BoltLauncher</code> child. Archetype <code>targeted_bolt.tres</code>, palette <code>frost.tres</code>, and the <code>Hand</code> marker as the muzzle. Click to open full size.</figcaption></figure>
 <div class="code-block"><div class="code-label">character.gd</div><pre><code><span class="syntax-keyword">extends</span> <span class="syntax-constant">CharacterBody3D</span>
 
 <span class="syntax-keyword">@onready</span> <span class="syntax-keyword">var</span> bolt: <span class="syntax-constant">VFXProjectileLauncher</span> <span class="syntax-operator">=</span> $BoltLauncher
@@ -135,6 +138,10 @@
   <li><code>hit(body, at)</code>: a unit was touched in flight. Use it for anything with a collision resource (<code>skillshot</code>, <code>piercing_line</code>, <code>fan_volley</code>, <code>boomerang</code>). A piercing shot emits it once per unit.</li>
   <li><code>impacted(at, target)</code>: the missile arrived, and again on each chain hop. <code>target</code> is null on the ground. Use it for shots that can’t miss, like <code>targeted_bolt</code>.</li>
 </ul>
+<div class="doc-shots">
+  <figure><img src="shots/hit-flight.webp" alt="A frost bolt flies toward a training dummy." width="1000" height="560" loading="lazy" decoding="async"><figcaption>In flight: a shot with <code>collision</code> emits <code>hit</code> when it touches the unit.</figcaption></figure>
+  <figure><img src="shots/hit-impact.webp" alt="The bolt arrives: a blue ring bursts on the dummy, which flashes white." width="1000" height="560" loading="lazy" decoding="async"><figcaption>On arrival: <code>impacted</code> fires, the <code>impact_effect</code> plays and the unit flashes.</figcaption></figure>
+</div>
 <h3>On the launcher</h3>
 <p>The launcher passes on the signals of every missile it fires, so you connect once:</p>
 <div class="code-block"><div class="code-label">character.gd</div><pre><code><span class="syntax-keyword">func</span> <span class="syntax-function">_ready</span>() <span class="syntax-operator">-&gt;</span> <span class="syntax-constant">void</span>:
@@ -183,6 +190,7 @@
     <tr><td><code>volley</code></td><td><code>VFXVolley</code>: FAN, LINE, RING, BURST, SPREAD, SWARM, RAIN</td></tr>
   </tbody>
 </table></div>
+<figure class="post-screenshot doc-ui doc-narrow"><a href="shots/ed-archetype.webp" target="_blank" rel="noopener noreferrer"><img src="shots/ed-archetype.webp" alt="Inspector for boomerang.tres: Preview in scene button, Motion VFXMotion, Collision VFXCollision, Arrival VFXArrivalReturn, Volley empty, a description, and Flight and Extra groups." width="462" height="646" loading="lazy" decoding="async"></a><figcaption><code>boomerang.tres</code> in the inspector: the four part slots on top, flight settings under <em>Flight</em>, and the <em>Preview in scene</em> button.</figcaption></figure>
 <p>To make your own, duplicate an archetype from <code>presets/archetypes/</code> and edit it in the inspector: swap the <code>motion</code> to change the path, add an <code>arrival</code> to change what happens at the end, add a <code>volley</code> to fire several at once. For charged shots, set <code>charge</code> (0 to 1) before firing.</p>
 <p>Runtime calls on a missile: <code>fire()</code>, <code>fire_direction()</code>, <code>detonate()</code> (recast), <code>disjoint()</code>, <code>redirect(new_target, new_source)</code> and <code>destroy(play_impact)</code>. To control which unit a chain or retarget picks, set <code>target_finder</code>.</p>
 
@@ -238,6 +246,23 @@
 <h2 id="impacts">Impacts, muzzles and casts</h2>
 <p><code>effects/impact/presets/</code> has 64 scenes: hits, crits, procs and magic impacts; explosions S/M/L, sphere and dome blasts, a ground slam and an AoE resolve; impacts per surface material, barrier ripples, shield and weak-point hits; the target hit flash, decals, muzzles per weapon, shell eject, reload, fizzle and ultimate activation. <code>effects/cast/presets/</code> has 9: gather and release, held and channel loops, charge-ups (continuous and stepped), an empowered weapon, overheat and a rune circle.</p>
 <p>Any of them fits straight into a projectile slot, or plays on its own with <code>VFX.spawn</code>:</p>
+<div class="doc-shots">
+  <figure><img src="shots/imp-explosion-large.webp" alt="A large fiery explosion with two ground rings." width="800" height="450" loading="lazy" decoding="async"><figcaption><code>explosion_large</code></figcaption></figure>
+  <figure><img src="shots/imp-explosion-medium.webp" alt="A medium explosion with one ground ring and sparks." width="800" height="450" loading="lazy" decoding="async"><figcaption><code>explosion_medium</code></figcaption></figure>
+  <figure><img src="shots/imp-blast-sphere.webp" alt="A glowing hex-patterned half dome." width="800" height="450" loading="lazy" decoding="async"><figcaption><code>blast_sphere</code></figcaption></figure>
+  <figure><img src="shots/imp-impact-ground-slam.webp" alt="Concentric rings on the floor." width="800" height="450" loading="lazy" decoding="async"><figcaption><code>impact_ground_slam</code></figcaption></figure>
+  <figure><img src="shots/imp-hit-critical.webp" alt="A bright starburst hit with a ring." width="800" height="450" loading="lazy" decoding="async"><figcaption><code>hit_critical</code></figcaption></figure>
+  <figure><img src="shots/imp-impact-magic-burst.webp" alt="A round magic burst inside a ring." width="800" height="450" loading="lazy" decoding="async"><figcaption><code>impact_magic_burst</code></figcaption></figure>
+  <figure><img src="shots/imp-muzzle-rifle.webp" alt="A short, hot rifle muzzle flash with a puff of smoke." width="800" height="450" loading="lazy" decoding="async"><figcaption><code>muzzle_rifle</code></figcaption></figure>
+  <figure><img src="shots/imp-ultimate-activation.webp" alt="A tall beam of light rising from a ring on the floor." width="800" height="600" loading="lazy" decoding="async" style="object-position: 50% 100%"><figcaption><code>ultimate_activation</code></figcaption></figure>
+</div>
+<p class="doc-caption">All eight use the <code>fire</code> palette. Every one of them recolours with any other palette.</p>
+<div class="doc-shots">
+  <figure><img src="shots/cast-charge-up.webp" alt="A violet orb with sparks pulling in." width="800" height="450" loading="lazy" decoding="async"><figcaption><code>charge_up</code> at 80% charge</figcaption></figure>
+  <figure><img src="shots/cast-cast-rune-circle.webp" alt="Two glowing violet rings on the floor." width="800" height="450" loading="lazy" decoding="async"><figcaption><code>cast_rune_circle</code></figcaption></figure>
+  <figure><img src="shots/cast-channel-loop.webp" alt="A violet ring on the floor with an orb above it." width="800" height="450" loading="lazy" decoding="async"><figcaption><code>channel_loop</code></figcaption></figure>
+</div>
+
 <div class="code-block"><div class="code-label">effects.gd</div><pre><code><span class="syntax-comment"># Sticky hit on the unit, turned to the hit surface, scaled by hit strength:</span>
 <span class="syntax-constant">VFX</span>.<span class="syntax-function">spawn</span>(<span class="syntax-constant">HIT</span>, at, {<span class="syntax-string">"hit_target"</span>: unit, <span class="syntax-string">"hit_normal"</span>: n, <span class="syntax-string">"direction"</span>: dir, <span class="syntax-string">"intensity"</span>: <span class="syntax-number">1.5</span>})
 
@@ -273,6 +298,11 @@ c.<span class="syntax-function">release</span>(aim)   <span class="syntax-commen
 </table></div>
 <p>Palettes go in as per-instance shader parameters, so pooled missiles with different palettes share materials safely. To make one, duplicate a file in <code>presets/palettes/</code> and change the colours, then assign it to the launcher or pass <code>{"palette": MY_PALETTE}</code> in <code>settings</code>.</p>
 
+<figure class="post-screenshot doc-ui doc-narrow"><a href="shots/ed-palette.webp" target="_blank" rel="noopener noreferrer"><img src="shots/ed-palette.webp" alt="Inspector for frost.tres: Primary light blue, Core near white, Accent deep blue, Intensity 2.4, Light Color empty." width="462" height="464" loading="lazy" decoding="async"></a><figcaption>A palette is four values. This is <code>frost.tres</code>.</figcaption></figure>
+<div class="doc-shots doc-shots-natural">
+  <figure><img src="shots/palettes.webp" alt="Eight identical missiles in lanes, coloured fire, frost, lightning, nature, poison, shadow, holy and arcane." width="900" height="760" loading="lazy" decoding="async"><figcaption>The same missile with eight palettes. Back to front: <code>fire</code>, <code>frost</code>, <code>lightning</code>, <code>nature</code>, <code>poison</code>, <code>shadow</code>, <code>holy</code>, <code>arcane</code>.</figcaption></figure>
+  <figure><img src="shots/tiers.webp" alt="Four arcane missiles in lanes, growing from small to large." width="900" height="700" loading="lazy" decoding="async"><figcaption>The same missile at each <code>tier</code>. Back to front: MINOR, NORMAL, MAJOR, ULTIMATE.</figcaption></figure>
+</div>
 <h3>Effect slots</h3>
 <ul>
   <li><code>impact_effect</code> plays on arrival; <code>extra_impact_effects</code> adds more.</li>
@@ -318,6 +348,7 @@ c.<span class="syntax-function">release</span>(aim)   <span class="syntax-commen
   <li>Use the <em>Fire now</em> and <em>Clear</em> buttons in the inspector. <code>interval</code> sets the time between shots.</li>
   <li>Move the target with <code>target_offset</code>, or set <code>aim_at</code> to a node in your scene. <code>target_strafe</code> moves it sideways so you can watch homing, and <code>extra_targets</code> adds capsules for chains, splits and pierce.</li>
 </ol>
+<figure class="post-screenshot"><a href="shots/ed-preview.webp" target="_blank" rel="noopener noreferrer"><img src="shots/ed-preview.webp" alt="Godot editor 3D view: a fire boomerang flies between a blue caster capsule and target capsules, with the VFXProjectilePreview inspector on the right." width="1600" height="960" loading="lazy" decoding="async"></a><figcaption><code>VFXProjectilePreview</code> firing <code>boomerang.tres</code> with the <code>fire</code> palette, inside the editor. The blue capsule is the caster; the others are targets.</figcaption></figure>
 <p>Archetype and palette resources also get a <em>Preview in scene</em> button in the inspector, which sends them to the preview in the open scene (and adds one if there isn’t one).</p>
 <ul>
   <li>Palette and archetype edits show on the next shot. Changes to a missile or impact scene show after you save that scene.</li>
@@ -355,6 +386,10 @@ c.<span class="syntax-function">release</span>(aim)   <span class="syntax-commen
 </ul>
 <h3>Parallax cracks</h3>
 <p><code>decal_crack_deep</code>, <code>decal_crack_glow</code> and the 7 m <code>decal_crack_crater</code> look cut into the floor. They use <code>VFXCrackEffect</code> and <code>vfx_crack_parallax.gdshader</code>, which does parallax occlusion mapping on a flat quad. The glow version puts light at the bottom of the breaks, so it hides at grazing angles and shows when you look down into the crack.</p>
+<div class="doc-shots">
+  <figure><img src="shots/crack-glow.webp" alt="A glowing orange crack split into the floor." width="800" height="450" loading="lazy" decoding="async"><figcaption><code>decal_crack_glow</code></figcaption></figure>
+  <figure><img src="shots/crack-deep.webp" alt="A dark crack that looks cut into the floor." width="800" height="450" loading="lazy" decoding="async"><figcaption><code>decal_crack_deep</code></figcaption></figure>
+</div>
 <ul>
   <li>Parallax: <code>parallax_enabled</code>, <code>depth</code> (metres), <code>steps</code>.</li>
   <li>Glow: <code>glow_enabled</code>, <code>glow_depth</code>, <code>glow_intensity</code>, <code>wall_glow</code>, <code>glow_spill</code>, <code>glow_pulse</code>, <code>glow_fade_power</code>.</li>
@@ -403,7 +438,7 @@ c.<span class="syntax-function">release</span>(aim)   <span class="syntax-commen
 <h2 id="problems">Common problems</h2>
 <dl class="doc-faq">
   <dt>“VFXProjectileLauncher: the VFX autoload is missing.”</dt>
-  <dd>The plugin isn’t enabled. Enable MOBA VFX under <em>Project Settings › Plugins</em> and check that <code>VFX</code> appears under <em>Globals › Autoload</em>.</dd>
+  <dd>The plugin isn’t enabled. Enable MOBA VFX under <em>Project Settings › Addons › Plugins</em> and check that <code>VFX</code> appears under <em>Globals › Autoload</em>.</dd>
   <dt>No scorch marks or cracks on the floor.</dt>
   <dd>Decals need Forward+ or Mobile; they don’t render on Compatibility. They’re also floor-only, so on a unit or wall hit they drop to the floor below or are skipped when there’s no floor within <code>max_ground_drop</code>.</dd>
   <dt>Sparks and debris fall through the floor.</dt>

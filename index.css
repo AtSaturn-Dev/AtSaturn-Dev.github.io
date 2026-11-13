@@ -286,3 +286,26 @@ a:hover { color: var(--accent); }
   .doc-clips { grid-template-columns: 1fr; }
   .post-body td code { white-space: normal; overflow-wrap: anywhere; }
 }
+
+/* Doc screenshots: grids of in-game shots and editor UI captures. */
+.doc-shots { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; margin: 28px 0; }
+.doc-shots figure { margin: 0; }
+.doc-shots img {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  background: #111111;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.doc-shots figcaption { margin-top: 8px; }
+.post-body .doc-ui img { border-color: #333333; }
+.post-body .doc-narrow { max-width: 462px; margin-inline: auto; }
+.post-body .doc-caption { margin-top: -8px; color: var(--text-muted); font-size: 12px; }
+@media (max-width: 600px) {
+  .doc-shots { gap: 10px; }
+  .doc-shots figcaption { font-size: 11px; }
+}
+.doc-shots-natural img { aspect-ratio: auto; }
